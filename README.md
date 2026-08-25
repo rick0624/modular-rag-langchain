@@ -67,6 +67,14 @@ curl -X POST localhost:8000/evaluate -H 'content-type: application/json' -d '{}'
 python -m pytest
 ```
 
+不起 service、直接用 Python API 試跑一輪 ingest → query → evaluate
+(適合快速實驗 config 組合;請在 repo 根目錄執行):
+
+```bash
+python try_rag.py
+python try_rag.py --query "特休假滿兩年有幾天?"
+```
+
 ### Service 端點
 
 | 端點 | 說明 |

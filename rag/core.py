@@ -215,7 +215,10 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
         results.append(reranked)
 
     documents = _traced(
-        trace, "fusion", inference.fusion, lambda: runtime.fuse(results)
+        trace,
+        "fusion",
+        inference.fusion or MethodConfig(method="merge"),  # 省略時實際生效的是 merge
+        lambda: runtime.fuse(results),
     )
 
     prompt_cfg = inference.prompt
