@@ -1,0 +1,4 @@
+{"query": "VPN 伺服器位址與連接埠是多少?", "relevant_doc_ids": ["vpn.txt"], "reference_answer": "vpn.example.com,連接埠 443。"}
+{"query": "病假連續幾天以上需要診斷證明?", "relevant_doc_ids": ["leave.md"], "reference_answer": "連續三天以上需檢附診斷證明。"}
+{"query": "報帳款項每個月哪幾天撥付?", "relevant_doc_ids": ["expense.txt"], "reference_answer": "每月五日與二十日兩批撥付。"}
+{"query": "特休假滿兩年有幾天?", "relevant_doc_ids": ["leave.md"], "reference_answer": "滿兩年十天。"}

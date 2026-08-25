@@ -1,0 +1,173 @@
+# 預設配置,同時是「方法型錄」:每個槽位所有可用的方法與參數都以
+# method_params 區塊並存展示 —— 換方法只需改 method 那一行,其餘區塊
+# 原樣保留、互不干擾(只有被選中的區塊會做參數驗證)。
+#
+# 目前啟用的組合完全離線:mock embedding + in_memory 索引 + mock 生成,
+# 不需網路、金鑰或模型下載,適合開發與試跑:
+#
+#   python -m rag.service --config configs/default.yaml
+#
+# 註解慣例:
+#   - 被註解掉的參數 = 選填,取消註解即可覆寫預設值。
+#   - 未啟用的示範區塊使用「字面值占位符」(如 YOUR_TOKEN),不用
+#     ${ENV_VAR} —— ${} 會在載入時立刻展開,引用未設定的變數即使在
+#     未使用的區塊也會報錯。實際接入時改成 ${YOUR_ENV_VAR} 並於 .env 提供
+#     (線上組合示範見 configs/online.yaml)。
+
+ingestion:
+  import:
+    method: local_files             # 可選:local_files / custom
+    method_params:
+      local_files:
+        input_dir: ./data/raw       # 必填:要匯入的資料夾
+        # extensions: [".txt", ".md"]   # 預設值即此(小寫比對)
+        # recursive: true           # 預設 true:含子資料夾
+      custom:                       # 自訂來源(DMS / API;契約:() → list[Source])
+        file: ./examples/custom_modules/my_importer.py
+        # function: build           # 預設 build:builder 函式名
+        # 其餘鍵透傳給 builder 的 params
+
+  parsing:
+    method: text                    # 可選:text / custom
+    method_params:
+      text:
+        encoding: utf-8             # 預設 utf-8
+      custom:                       # 自訂解析(PDF / OCR 等;契約:sources → documents)
+        file: ./my_parser.py
+        # function: build
+
+  chunking:
+    method: recursive               # 可選:recursive / custom
+    method_params:
+      recursive:                    # 遞迴字元切分(段落 → 行 → 中文句號 → 空白)
+        chunk_size: 300             # 預設 300:每片字元數上限
+        chunk_overlap: 50           # 預設 50:相鄰切片重疊字元數(需 < chunk_size)
+        # separators: ["\n\n", "\n", "。", " ", ""]   # 預設值即此
+      custom:                       # 自訂切塊(契約:documents → documents,
+        file: ./my_chunker.py       #   metadata 逐塊複製、doc_id 必須保留)
+
+  embedding:
+    # 可選:mock / api / custom
+    # 注意:查詢端與建索引共用同一個 embeddings 物件(同向量空間紀律),
+    #      換方法或模型後必須重建索引。
+    method: mock
+    method_params:
+      mock:                         # 離線確定性詞袋向量(開發測試用)
+        dim: 256                    # 預設 256
+      api:                          # 通用 HTTP embedding API(欄位對映,預設 OpenAI 式)
+        endpoint: https://api.openai.com/v1/embeddings   # 必填
+        headers:                    # 預設 {}(認證放這裡)
+          Authorization: Bearer YOUR_TOKEN
+        model: text-embedding-3-small   # 預設 None(不帶 model 欄位)
+        # batch_size: 16            # 預設 16
+        # timeout: 30.0             # 預設 30.0
+        # texts_field: input        # 預設 "input":請求中放文字清單的欄位名
+        # model_field: model        # 預設 "model"
+        # embeddings_field: data    # 預設 "data":回應中向量清單的欄位
+        #                           #   (a.b 巢狀路徑;回應本身是清單時設 null)
+        # item_field: embedding     # 預設 "embedding":清單元素是物件時向量所在
+        #                           #   欄位;元素直接是向量時設 null
+
+  indexing:
+    method: in_memory               # 可選:in_memory / elasticsearch
+    method_params:
+      in_memory: {}                 # 行程內索引(無參數;service 重啟即消失)
+      elasticsearch:
+        es_url: http://localhost:9200   # 必填
+        # 索引名建議帶上 embedding 模型:ES 的 dense_vector 維度建立後
+        # 不可變更,換模型/維度就得換索引(或先刪掉重建)。
+        index: modular-rag          # 預設 "modular-rag"
+        # --- 認證(叢集開了 security 才需要,二擇一)---
+        # username: elastic         # 預設 None:basic auth,需與 password 成對
+        # password: YOUR_PASSWORD   # 預設 None
+        # api_key: YOUR_TOKEN       # 預設 None
+
+inference:
+  query_transformation:
+    method: passthrough             # 可選:passthrough / custom
+    # 鏈(list[str] → list[str],可串接):method: [passthrough, custom]
+    method_params:
+      passthrough: {}               # 原樣通過(無參數)
+      custom:                       # 自訂改寫 / 拆解(契約:queries → queries;
+        file: ./my_transform.py     #   輸出多筆 = 逐子查詢檢索後由 fusion 合併)
+
+  retrieval:
+    method: vector                  # 可選:vector / custom
+    method_params:
+      vector:
+        top_k: 5                    # 預設 5
+      custom:                       # 自訂檢索(如外部檢索 API;契約:query → documents;
+        file: ./my_retrieval.py     #   外部欄位映射進 Document 是模組內部責任)
+
+  reranking:
+    method: none                    # 可選:none / api / custom;鏈:[api, custom]
+    method_params:
+      none: {}                      # 不重排(無參數)
+      api:                          # 通用 HTTP rerank API(欄位對映)
+        endpoint: https://rerank.example.com/v1/rerank   # 必填
+        headers:                    # 預設 {}
+          Authorization: Bearer YOUR_TOKEN
+        model: your-rerank-model    # 預設 None(不帶 model 欄位)
+        top_k: 5                    # 預設 5
+        # timeout: 30.0             # 預設 30.0
+        # --- 請求欄位名 ---
+        # query_field: question     # 預設 "question"
+        # documents_field: documents    # 預設 "documents"
+        # model_field: model        # 預設 "model"
+        # --- 回應欄位名 ---
+        # results_field: returnData # 預設 "returnData";a.b 巢狀路徑,
+        #                           #   回應本身就是清單時設為 null
+        # index_field: index        # 預設 "index"
+        # score_field: score        # 預設 "score"
+        # index_base: 0             # 預設 0;1 起算的 API 設為 1(設錯會整體位移)
+        # higher_is_better: true    # 預設 true;回傳「距離」的 API 設 false
+        # raise_on_failure: false   # 預設 false = API 掛掉時保留原檢索順序並記
+        #                           #   WARNING;初次接線可設 true 讓錯誤直接炸出來
+      custom:                       # 自訂重排(契約:(query, documents) → documents)
+        file: ./examples/custom_modules/my_reranker.py
+        top_k: 3                    # file / function 以外的鍵透傳給 builder
+
+  generation:
+    method: mock                    # 可選:mock / openai_compatible / custom
+    method_params:
+      mock:                         # 離線假答案(依序循環)
+        # replies: ["固定回覆"]     # 預設 None = 內建預設回覆
+      openai_compatible:            # OpenAI / vLLM / Ollama / 公司閘道
+        model: gpt-5-mini           # 必填
+        # base_url: http://localhost:11434/v1   # 預設 None = 官方 OpenAI
+        # api_key: YOUR_TOKEN       # 預設 None = 用 OPENAI_API_KEY 環境變數
+        # temperature: 0.2          # 預設 None(不帶;gpt-5 系列不接受非預設值)
+        # max_tokens: 1024          # 預設 None
+        # timeout: 60               # 預設 None
+        # headers: {X-Tenant: team-a}   # 預設 {}:額外 HTTP 標頭
+
+  # fusion:                         # 選填:多子查詢結果合併;省略 = merge 預設參數
+  #   method: merge                 # 可選:merge / custom
+  #   params:
+  #     top_k: 5                    # 預設 5:合併(去重 + 分數降冪)後保留筆數
+  # prompt:                         # 選填:答案生成的 prompt(省略 = 內建 zh-TW 模板)
+  #   template: |                   # 需含 {query} 與 {context} 佔位符
+  #     請根據以下內容回答問題。
+  #
+  #     {context}
+  #
+  #     問題:{query}
+  #   system: 只根據提供的內容回答問題。   # 預設 None
+  # routing:                        # 選填支線:查詢分類(不影響檢索,結果進 routing 鍵)
+  #   method: keyword_match         # 可選:keyword_match / custom
+  #   params:
+  #     routes:                     # 必填:類別 → 關鍵字清單
+  #       資訊: [VPN, 帳號, 密碼]
+  #       人資: [請假, 特休, 病假]
+  #     # default_category: general # 預設 general:無命中時的類別
+  # formatter:                      # 選填終端支線:對外格式(結果進 output 鍵)
+  #   method: simple_json           # 可選:simple_json / custom
+  #   params:
+  #     include_content: true       # 預設 true;false = 引用只留識別資訊
+
+evaluation:                         # 選填;省略則 /evaluate 需在請求中帶 cases
+  method: retrieval_metrics         # 目前唯一內建方法(hit_rate / MRR)
+  params:
+    dataset_path: ./data/eval/qa.jsonl
+    # cases:                        # 或直接行內給案例(優先於 dataset_path)
+    #   - {query: "...", relevant_doc_ids: ["vpn.txt"]}

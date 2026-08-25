@@ -1,0 +1,75 @@
+# 線上組合示範:API embedding + Elasticsearch 索引 + API rerank +
+# OpenAI 相容生成。機密一律以 ${ENV_VAR} 注入(複製 .env.example 為
+# .env 填入實際值),設定檔可安心進版控。
+#
+#   python -m rag.service --config configs/online.yaml
+#
+# 提醒:
+#   - ES 的 dense_vector 維度建立後不可變,換 embedding 模型/維度時
+#     請換 index 名稱(或先刪除重建)。
+#   - elasticsearch 是持久索引,服務啟動時預設不會自動 ingest
+#     (RAG_INGEST_ON_STARTUP=auto);首次啟動後呼叫 POST /ingest 建索引。
+
+ingestion:
+  import:
+    method: local_files
+    params:
+      input_dir: ./data/raw
+
+  parsing:
+    method: text
+
+  chunking:
+    method: recursive
+    params:
+      chunk_size: 300
+      chunk_overlap: 50
+
+  embedding:
+    method: api                     # 欄位對映預設 OpenAI 式;非 OpenAI 形狀時
+    params:                         #   以 *_field 參數對應(見 default.yaml 型錄)
+      endpoint: ${EMBEDDING_API_URL}
+      headers:
+        Authorization: Bearer ${API_TOKEN}
+      model: text-embedding-3-small
+
+  indexing:
+    method: elasticsearch
+    params:
+      es_url: ${ES_URL}
+      index: modular-rag-text-embedding-3-small   # 索引名帶模型名(見上方提醒)
+      username: ${ES_USER}
+      password: ${ES_PASSWORD}
+
+inference:
+  query_transformation:
+    method: passthrough
+
+  retrieval:
+    method: vector
+    params:
+      top_k: 10                     # 多取一些候選給 rerank 收斂
+
+  reranking:
+    method: api
+    params:
+      endpoint: ${RERANK_API_URL}
+      headers:
+        Authorization: Bearer ${API_TOKEN}
+      top_k: 5
+      # 回應形狀不同時再調 results_field / index_field / score_field / index_base
+
+  generation:
+    method: openai_compatible
+    params:
+      model: gpt-5-mini
+      base_url: ${OPENAI_BASE_URL}
+      api_key: ${OPENAI_API_KEY}
+
+  prompt:
+    system: 只根據提供的內容回答問題;內容不足時直接說明無法回答。
+
+evaluation:
+  method: retrieval_metrics
+  params:
+    dataset_path: ./data/eval/qa.jsonl

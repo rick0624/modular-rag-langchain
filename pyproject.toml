@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modular-rag-langchain"
+version = "0.1.0"
+description = "模組化 RAG 框架(LangChain 版 MVP):config 驅動、function 替換、ingestion/inference service"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain-core>=1.0,<2",
+    "langchain-text-splitters>=1.0,<2",
+    "langchain-openai>=1.0,<2",
+    "langchain-elasticsearch>=1.0,<2",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "pydantic>=2.7,<3",
+    "PyYAML>=6.0",
+    # InMemoryVectorStore 的餘弦相似度在執行期 lazy import numpy,不明列會炸
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[tool.setuptools]
+packages = ["rag", "rag.slots"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
