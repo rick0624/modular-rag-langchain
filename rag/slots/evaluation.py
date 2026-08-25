@@ -49,19 +49,22 @@ def load_cases(path: str | Path) -> list[EvalCase]:
 
 
 def load_default_cases(cfg: MethodConfig) -> list[EvalCase]:
-    """依 evaluation 配置載入預設測試案例(行內 cases 優先於 dataset_path)。"""
-    p = validate_params(
-        "evaluation", cfg.methods()[0], _RetrievalMetricsParams,
-        cfg.params_for(),
-    )
-    if p.cases:
-        return [EvalCase.model_validate(case) for case in p.cases]
-    if p.dataset_path is None:
+    """依 evaluation 配置載入預設測試案例(行內 cases 優先於 dataset_path)。
+
+    只讀 ``cases`` / ``dataset_path`` 兩個鍵,不做完整參數驗證 ——
+    ``method: custom`` 的 evaluation 也能用同樣的方式在 config 給題目。
+    """
+    params = cfg.params_for()
+    inline = params.get("cases")
+    if inline:
+        return [EvalCase.model_validate(case) for case in inline]
+    dataset_path = params.get("dataset_path")
+    if dataset_path is None:
         raise ConfigError(
-            "evaluation 方法 'retrieval_metrics' 需要 dataset_path(JSONL 檔)"
-            "或行內 cases 其中之一"
+            "evaluation 需要 dataset_path(JSONL 檔)或行內 cases 其中之一;"
+            "也可以在 /evaluate 請求中直接提供 cases"
         )
-    return load_cases(p.dataset_path)
+    return load_cases(dataset_path)
 
 
 def _retrieved_doc_ids(result: dict[str, Any]) -> list[str]:

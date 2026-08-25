@@ -149,8 +149,12 @@ def build(params, ctx):
 
 `ctx` 帶 `config` / `embeddings` / `store`,需要時可取用(例如自訂
 retrieval 直接查 `ctx.store`)。函式簽名不符契約時,**建構期**就會報錯
-並指明期望的參數名。可跑的完整範例見 `examples/custom_modules/`
-(自訂 importer 與 reranker,離線可跑,測試有覆蓋)。
+並指明期望的參數名。
+
+**寫自訂模組時,從 `examples/custom_modules/` 複製對應槽位的範本開始
+改**:11 個 function 槽位各有一份離線可跑的範本,槽位函式的型別註記
+就是該槽位要求的 input / output 格式(範本即契約,對照表見該資料夾的
+README;測試有覆蓋,範本永遠與契約同步)。
 
 各槽位契約(函式參數名 → 回傳值)整理於
 [docs/interfaces.md](docs/interfaces.md);新增「內建」方法則是在

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rag import build_runtime, ingest, query
+from rag import EvalCase, build_runtime, evaluate, ingest, query
 from rag.errors import ConfigError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +110,55 @@ def test_example_reranker_runs(make_config, monkeypatch):
     result = query(runtime, "VPN 伺服器位址是多少?")
     assert len(result["documents"]) <= 2
     assert result["documents"][0].metadata["doc_id"] == "vpn.txt"
+
+
+# 每份 skeleton 範本掛進對應槽位都能通過契約驗證並跑完整輪(範本即契約)。
+_SKELETONS = [
+    ("ingestion.import", "my_importer.py"),
+    ("ingestion.parsing", "my_parser.py"),
+    ("ingestion.chunking", "my_chunker.py"),
+    ("inference.query_transformation", "my_query_transform.py"),
+    ("inference.retrieval", "my_retriever.py"),
+    ("inference.reranking", "my_reranker.py"),
+    ("inference.fusion", "my_fusion.py"),
+    ("inference.generation", "my_generator.py"),
+    ("inference.routing", "my_router.py"),
+    ("inference.formatter", "my_formatter.py"),
+]
+
+
+@pytest.mark.parametrize("slot_path,filename", _SKELETONS)
+def test_every_skeleton_passes_contract_and_runs(make_config, slot_path, filename):
+    runtime = build_runtime(
+        make_config(
+            **{
+                slot_path: {
+                    "method": "custom",
+                    "params": {"file": str(EXAMPLES / filename)},
+                }
+            }
+        )
+    )
+    ingest(runtime)
+    result = query(runtime, "VPN 伺服器位址是多少?")
+    assert result["answer"]
+    assert result["documents"]
+
+
+def test_skeleton_evaluator(make_config):
+    runtime = build_runtime(
+        make_config(
+            evaluation={
+                "method": "custom",
+                "params": {"file": str(EXAMPLES / "my_evaluator.py")},
+            }
+        )
+    )
+    ingest(runtime)
+    result = evaluate(
+        runtime, [EvalCase(query="VPN 位址?", relevant_doc_ids=["vpn.txt"])]
+    )
+    assert result["metrics"]["recall"] == 1.0
 
 
 def test_example_importer_runs(make_config):
