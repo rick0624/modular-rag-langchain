@@ -81,6 +81,21 @@ ingestion:
         # username: elastic         # 預設 None:basic auth,需與 password 成對
         # password: YOUR_PASSWORD   # 預設 None
         # api_key: YOUR_TOKEN       # 預設 None
+        # --- 自訂 mapping / settings(進階)---
+        # 僅在索引不存在、由框架建立時生效;已存在的索引原樣沿用。
+        # 注意欄位名是 LangChain 慣例:內文欄位預設 text、向量欄位預設
+        # vector(舊 Haystack 版是 content / embedding);要用別的名字請
+        # 同步設定 query_field / vector_query_field。設定 custom_mapping
+        # 時,建構期就會連線 ES 檢查索引是否存在。
+        # custom_mapping:           # 預設 None = 內建 mapping。完整覆蓋:
+        #   properties:             #   須自含內文與向量兩個欄位
+        #     text: {type: text, analyzer: ik_smart}
+        #     vector: {type: dense_vector, dims: 1536}   # dims = embedding 維度
+        # settings:                 # 預設 None;必須搭配 custom_mapping
+        #   analysis: {...}         #   analyzer 定義等 index settings
+        #   # index.default_pipeline: my-pipeline   # 寫入時套用的 ingest pipeline
+        # query_field: text         # 預設 text:內文欄位名
+        # vector_query_field: vector    # 預設 vector:向量欄位名
 
 inference:
   query_transformation:

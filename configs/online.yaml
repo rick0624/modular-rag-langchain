@@ -40,6 +40,9 @@ ingestion:
       index: modular-rag-text-embedding-3-small   # 索引名帶模型名(見上方提醒)
       username: ${ES_USER}
       password: ${ES_PASSWORD}
+      # 需要自訂 analyzer / mapping 時(參數細節見 default.yaml 型錄):
+      # custom_mapping: {properties: {text: {...}, vector: {...}}}
+      # settings: {analysis: {...}}
 
 inference:
   query_transformation:
