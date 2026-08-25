@@ -36,13 +36,15 @@ input / output 格式 —— 範本即契約(完整定義見
 
 ## 兩個「物件槽位」:embedding 與 indexing
 
-這兩個槽位的產物不是函式,而是 LangChain 介面的物件(沒有範本):
+這兩個槽位一樣支援 custom,差別是產物**不是單一函式,而是帶兩個方法的
+物件**(duck-type 檢查,不必繼承任何 LangChain class):
 
-- **embedding**:`build(params, ctx)` 回傳實作 `embed_documents(texts)` 與
-  `embed_query(text)` 的物件(LangChain `Embeddings` 介面)。
-- **indexing**:回傳實作 `add_documents(docs, ids=...)` 與
-  `similarity_search_with_score(query, k=...)` 的物件(LangChain
-  `VectorStore` 介面),建立時請使用 `ctx.embeddings`。
+| 槽位 | 範本 | 產物需要的方法 |
+|---|---|---|
+| embedding | `my_embeddings.py` | `embed_documents(texts) -> list[list[float]]`、`embed_query(text) -> list[float]`(同一物件服務建索引與查詢端 → 同向量空間) |
+| indexing | `my_indexing.py` | `add_documents(documents, ids=...)`、`similarity_search_with_score(query, k=...) -> [(Document, 分數), ...]`(向量用 `ctx.embeddings` 算) |
 
 一般情況用內建的 `api` embedding(欄位對映)與 `in_memory` /
-`elasticsearch` indexing 就夠;真的要換底層時再自訂。
+`elasticsearch` indexing 就夠;要接自研索引、非 LangChain 生態的
+向量庫時再自訂。`source_field` / `extra_vectors` 是框架層參數,
+所有 embedding 方法(含 custom)都支援,不用在自訂模組裡處理。

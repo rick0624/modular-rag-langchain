@@ -50,6 +50,18 @@ ingestion:
     # 可選:mock / api / custom
     # 注意:查詢端與建索引共用同一個 embeddings 物件(同向量空間紀律),
     #      換方法或模型後必須重建索引。
+    # 所有方法(含 custom)都支援兩個框架層參數:
+    #   source_field: summary       # 預設 None = 拿切片內文做主向量;指定
+    #                               #   chunking 生成的 metadata 欄位時,拿該
+    #                               #   欄位 embed、prompt 仍給切片內文(解耦);
+    #                               #   切片缺該欄位時 ingest 直接報錯
+    #   extra_vectors:              # 預設 None:額外向量(共用同一個模型),
+    #     title_vector: title       #   {向量欄位名: 來源欄位};算好寫進切片
+    #                               #   metadata 隨之落入索引。內建檢索只用主
+    #                               #   向量,額外向量供 custom retrieval 用。
+    #                               #   ES 上要對額外向量做 kNN,須以
+    #                               #   custom_mapping 宣告 metadata.<欄位> 為
+    #                               #   dense_vector。欄位名不可用框架保留名
     method: mock
     method_params:
       mock:                         # 離線確定性詞袋向量(開發測試用)
@@ -69,7 +81,7 @@ ingestion:
         #                           #   欄位;元素直接是向量時設 null
 
   indexing:
-    method: in_memory               # 可選:in_memory / elasticsearch
+    method: in_memory               # 可選:in_memory / elasticsearch / custom
     method_params:
       in_memory: {}                 # 行程內索引(無參數;service 重啟即消失)
       elasticsearch:

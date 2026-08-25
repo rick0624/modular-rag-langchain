@@ -53,7 +53,24 @@ class HashedNgramEmbeddings(Embeddings):
         return self._embed(text)
 
 
-class _MockParams(BaseParams):
+class _CommonEmbeddingParams(BaseParams):
+    """所有 embedding 方法共通的參數(由框架的 ingest 流程消費)。"""
+
+    source_field: str | None = Field(
+        default=None,
+        description="主向量的來源欄位:None = 切片內文(page_content);"
+        "指定 chunking 生成的 metadata 欄位名時,拿該欄位做 embedding、"
+        "prompt 仍給切片內文(解耦)。查詢端不受影響(同一模型)",
+    )
+    extra_vectors: dict[str, str] | None = Field(
+        default=None,
+        description="額外向量 {向量欄位名: 來源欄位}:用同一個模型對額外"
+        "欄位各出一組向量,寫進切片 metadata 隨之落入索引;內建檢索只用"
+        "主向量,額外向量供 custom retrieval 使用。欄位名不可用框架保留名",
+    )
+
+
+class _MockParams(_CommonEmbeddingParams):
     dim: int = Field(default=256, gt=0, description="向量維度")
 
 
@@ -64,7 +81,7 @@ def build_mock(params: dict[str, Any], ctx: BuildContext) -> Embeddings:
     return HashedNgramEmbeddings(dim=p.dim)
 
 
-class _ApiParams(BaseParams):
+class _ApiParams(_CommonEmbeddingParams):
     endpoint: str = Field(description="embedding API 的完整 URL")
     headers: dict[str, str] = Field(default_factory=dict, description="額外 HTTP 標頭(認證放這裡)")
     model: str | None = Field(default=None, description="None = 請求不帶 model 欄位")

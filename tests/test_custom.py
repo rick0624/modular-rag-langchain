@@ -124,6 +124,8 @@ _SKELETONS = [
     ("inference.generation", "my_generator.py"),
     ("inference.routing", "my_router.py"),
     ("inference.formatter", "my_formatter.py"),
+    ("ingestion.embedding", "my_embeddings.py"),
+    ("ingestion.indexing", "my_indexing.py"),
 ]
 
 

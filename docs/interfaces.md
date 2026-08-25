@@ -20,7 +20,7 @@
 | 1 Import | `() -> list[Source]` | 來源資訊寫在 params;每筆 `Source` 必帶穩定的 `doc_id`,本地檔給 `path`、文字給 `text`,`meta` 會複製進切片 |
 | 2 Parsing | `(sources) -> list[Document]` | 內容變純文字;metadata 帶 `doc_id` / `page`(無分頁概念時為 1) |
 | 3 Chunking | `(documents) -> list[Document]` | 切片;metadata 逐塊複製,`doc_id` 必須保留 |
-| 4 Embedding | `Embeddings` 物件 | 建索引與查詢共用同一物件(同向量空間);換方法或模型後必須重建索引 |
+| 4 Embedding | `Embeddings` 物件 | 建索引與查詢共用同一物件(同向量空間);換方法或模型後必須重建索引。框架層參數(所有方法皆支援):`source_field` 指定主向量的來源 metadata 欄位(prompt 仍給切片內文);`extra_vectors` {向量欄位: 來源欄位} 產出額外向量寫進 metadata,供 custom retrieval 使用 |
 | 5 Indexing | `VectorStore` 物件 | 寫入由框架以 `add_documents(ids=chunk_id)` 進行 → 重跑 ingest 即 upsert |
 | 6 Query Transformation | `(queries) -> list[str]` | 1 筆 = 不拆解(傳統流程);N 筆 = 逐子查詢檢索後由 fusion 合併;可方法鏈 |
 | 7 Retrieval | `(query) -> list[Document]` | `metadata["score"]` 越大越相關、結果降冪 |
@@ -48,7 +48,8 @@ custom module(`method: custom`)掛進槽位時,builder 回傳的函式參數名
 
 檢索之後另帶 `score`(越大越相關)。自訂 chunker 可額外生成自訂
 metadata 欄位,但不可使用框架保留名(`doc_id` / `seq` / `page` /
-`chunk_id` / `score`)。
+`chunk_id` / `score`);embedding 的 `source_field` / `extra_vectors`
+可引用這些自訂欄位(`extra_vectors` 的向量欄位名同樣不可用保留名)。
 
 ## 3. 不變量(修改程式時不可破壞)
 

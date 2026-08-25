@@ -11,14 +11,19 @@ trace 是逐步附加的 list of dicts:
 
 from __future__ import annotations
 
+import logging
 import time
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from langchain_core.documents import Document
 
 from rag.config import MethodConfig, RAGConfig
 from rag.errors import ComponentError, ConfigError
+from rag.interfaces import META_KEYS
+
+logger = logging.getLogger(__name__)
 from rag.interfaces import (
     ChunkFn,
     EvalCase,
@@ -36,6 +41,47 @@ from rag.interfaces import (
 from rag.prompts import build_messages
 from rag.registry import BuildContext, build_slot
 from rag.slots.evaluation import load_default_cases
+
+
+class SourceFieldEmbeddings:
+    """embedding 的包裝:ingest 時把「拿去 embed 的文字」換成指定 meta 欄位。
+
+    vector store 在 ``add_documents`` 內部會以 ``page_content`` 呼叫
+    ``embed_documents`` —— 本包裝維護一個「替換文字」佇列:ingest 先以
+    :meth:`feed` 依切片順序放入 ``source_field`` 欄位的文字,store 來
+    要向量時就改 embed 佇列裡的文字(依序消化,子批次也正確)。
+    佇列為空時原樣委派;``embed_query``(查詢端)永遠原樣委派 ——
+    同向量空間不變。
+    """
+
+    def __init__(self, inner: Any, source_field: str) -> None:
+        self.inner = inner
+        self.source_field = source_field
+        self._queue: deque[str] = deque()
+
+    def feed(self, texts: list[str]) -> None:
+        self._queue.extend(texts)
+
+    def drain(self) -> int:
+        """清空佇列並回傳殘留數(正常 ingest 後應為 0)。"""
+        leftover = len(self._queue)
+        self._queue.clear()
+        return leftover
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not self._queue:
+            return self.inner.embed_documents(texts)
+        if len(self._queue) < len(texts):
+            raise ComponentError(
+                f"source_field 替換佇列只剩 {len(self._queue)} 筆,但 store 要求 "
+                f"embed {len(texts)} 筆 —— 自訂 store 的 add_documents 呼叫"
+                "embed_documents 的次數或順序與傳入的切片不一致"
+            )
+        replaced = [self._queue.popleft() for _ in texts]
+        return self.inner.embed_documents(replaced)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.inner.embed_query(text)
 
 
 @dataclass
@@ -56,6 +102,8 @@ class Runtime:
     route: RouteFn | None
     format: FormatFn | None
     evaluator: EvaluateFn | None
+    source_field: str | None = None
+    extra_vectors: dict[str, str] = field(default_factory=dict)
 
 
 def build_runtime(config: RAGConfig) -> Runtime:
@@ -70,6 +118,10 @@ def build_runtime(config: RAGConfig) -> Runtime:
     parser = build_slot("parsing", ingestion.parsing, ctx)
     chunker = build_slot("chunking", ingestion.chunking, ctx)
     ctx.embeddings = build_slot("embedding", ingestion.embedding, ctx)
+    source_field, extra_vectors = _embedding_field_options(ingestion.embedding)
+    if source_field:
+        # store 持有的是包裝後的物件 → indexing / 查詢端都走同一份。
+        ctx.embeddings = SourceFieldEmbeddings(ctx.embeddings, source_field)
     ctx.store = build_slot("indexing", ingestion.indexing, ctx)
 
     transform = build_slot(
@@ -104,7 +156,43 @@ def build_runtime(config: RAGConfig) -> Runtime:
         route=route,
         format=formatter,
         evaluator=evaluator,
+        source_field=source_field,
+        extra_vectors=extra_vectors,
     )
+
+
+def _embedding_field_options(cfg: MethodConfig) -> tuple[str | None, dict[str, str]]:
+    """讀出 embedding 的 source_field / extra_vectors 並驗證欄位名。
+
+    這兩個參數由**框架的 ingest 流程**消費(embedding 產物看不到
+    metadata),所有 embedding 方法(含 custom)都支援。
+    """
+    params = cfg.params_for()
+    source_field = params.get("source_field")
+    extra_vectors = params.get("extra_vectors") or {}
+    if source_field is not None and (
+        not isinstance(source_field, str) or not source_field
+    ):
+        raise ConfigError(
+            "embedding 的 source_field 必須是非空字串(chunking 生成的 "
+            f"metadata 欄位名),實際得到:{source_field!r}"
+        )
+    if not isinstance(extra_vectors, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) and key and value
+        for key, value in extra_vectors.items()
+    ):
+        raise ConfigError(
+            "embedding 的 extra_vectors 必須是 {向量欄位名: 來源欄位} 的"
+            f"字串對映,實際得到:{extra_vectors!r}"
+        )
+    reserved = set(META_KEYS) | {"score"}
+    bad = sorted(reserved & set(extra_vectors))
+    if bad:
+        raise ConfigError(
+            f"extra_vectors 的向量欄位名不可使用框架保留名 {bad};"
+            f"保留名:{sorted(reserved)}"
+        )
+    return source_field, dict(extra_vectors)
 
 
 def _stamp_chunks(chunks: list[Document]) -> list[Document]:
@@ -164,12 +252,27 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
         trace, "chunking", ingestion.chunking, lambda: runtime.chunker(documents)
     )
     chunks = _stamp_chunks(chunks)
-    _traced(
-        trace,
-        "indexing",
-        ingestion.indexing,
-        lambda: runtime.store.add_documents(chunks, ids=[chunk.id for chunk in chunks]),
-    )
+    if runtime.extra_vectors:
+        _add_extra_vectors(runtime, chunks)
+    if runtime.source_field:
+        runtime.embeddings.feed(_field_texts(chunks, runtime.source_field, "source_field"))
+    try:
+        _traced(
+            trace,
+            "indexing",
+            ingestion.indexing,
+            lambda: runtime.store.add_documents(
+                chunks, ids=[chunk.id for chunk in chunks]
+            ),
+        )
+    finally:
+        if runtime.source_field:
+            leftover = runtime.embeddings.drain()
+            if leftover:
+                logger.warning(
+                    "source_field 替換佇列殘留 %d 筆(store 實際 embed 的切片數"
+                    "少於傳入數),已清空", leftover,
+                )
 
     return {
         "documents_written": len(chunks),
@@ -177,6 +280,35 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
         "elapsed_ms": round((time.perf_counter() - start) * 1000, 1),
         "steps": trace,
     }
+
+
+def _field_texts(chunks: list[Document], field_name: str, purpose: str) -> list[str]:
+    """依切片順序取出指定 metadata 欄位的文字;缺欄位直接報錯。"""
+    texts: list[str] = []
+    for chunk in chunks:
+        value = chunk.metadata.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise ComponentError(
+                f"切片 '{chunk.id}' 缺少 embedding 來源欄位 '{field_name}'"
+                f"({purpose});請確認 chunking(或 custom chunker)有為每個"
+                "切片生成該 metadata 欄位"
+            )
+        texts.append(value)
+    return texts
+
+
+def _add_extra_vectors(runtime: Runtime, chunks: list[Document]) -> None:
+    """為每組 extra_vectors 算好向量,寫進切片 metadata(隨 metadata 落入索引)。
+
+    內建檢索只用主向量;額外向量供 custom retrieval 使用。ES 上要對
+    額外向量做 kNN,須以 custom_mapping 宣告 ``metadata.<欄位>`` 為
+    dense_vector,否則落入 dynamic mapping 變普通 float 陣列。
+    """
+    for vector_field, source in runtime.extra_vectors.items():
+        texts = _field_texts(chunks, source, f"extra_vectors.{vector_field}")
+        vectors = runtime.embeddings.embed_documents(texts)  # 佇列空 → 原樣委派
+        for chunk, vector in zip(chunks, vectors):
+            chunk.metadata[vector_field] = vector
 
 
 def query(runtime: Runtime, text: str) -> dict[str, Any]:

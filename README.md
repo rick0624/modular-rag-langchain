@@ -152,9 +152,17 @@ retrieval 直接查 `ctx.store`)。函式簽名不符契約時,**建構期**就�
 並指明期望的參數名。
 
 **寫自訂模組時,從 `examples/custom_modules/` 複製對應槽位的範本開始
-改**:11 個 function 槽位各有一份離線可跑的範本,槽位函式的型別註記
-就是該槽位要求的 input / output 格式(範本即契約,對照表見該資料夾的
-README;測試有覆蓋,範本永遠與契約同步)。
+改**:13 個槽位各有一份離線可跑的範本 —— 11 個 function 槽位的範本,
+槽位函式的型別註記就是該槽位要求的 input / output 格式;embedding /
+indexing 兩個物件槽位的範本(`my_embeddings.py` / `my_indexing.py`)
+則示範需要提供哪些方法(範本即契約,對照表見該資料夾的 README;
+測試有覆蓋,範本永遠與契約同步)。
+
+embedding 另支援兩個框架層參數(所有方法含 custom 皆可用,見
+`configs/default.yaml` 型錄):`source_field` 指定主向量的來源欄位
+(embed 摘要、prompt 給原文的解耦手法)、`extra_vectors` 對額外欄位
+各出一組向量寫進切片 metadata(供 custom retrieval 做多向量檢索;
+ES 上搭配 `custom_mapping` 宣告 dense_vector)。
 
 各槽位契約(函式參數名 → 回傳值)整理於
 [docs/interfaces.md](docs/interfaces.md);新增「內建」方法則是在
