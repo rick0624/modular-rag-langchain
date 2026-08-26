@@ -145,14 +145,19 @@ def build_elasticsearch(params: dict[str, Any], ctx: BuildContext) -> VectorStor
         "vector_query_field": p.vector_query_field,
     }
     if p.custom_mapping is not None:
+        declared = sorted(p.custom_mapping.get("properties", {}))
         for field in (p.query_field, p.vector_query_field):
             if field not in p.custom_mapping.get("properties", {}):
                 raise ConfigError(
-                    f"custom_mapping 的 properties 缺少欄位 '{field}';"
-                    "mapping 是完整覆蓋,須自含內文欄位"
+                    f"custom_mapping 的 properties 缺少欄位 '{field}'"
+                    f"(實際宣告的欄位:{declared or '(無)'})。mapping 是完整"
+                    "覆蓋,須自含內文欄位"
                     f"(query_field: {p.query_field})與向量欄位"
                     f"(vector_query_field: {p.vector_query_field},"
-                    "type: dense_vector,dims = embedding 維度)"
+                    "type: dense_vector,dims = embedding 維度)。"
+                    "若 mapping 沿用其他欄位名(如舊 Haystack 版的 content / "
+                    "embedding),請同步設定 query_field / vector_query_field "
+                    "指向它們,讀寫與本檢查都會跟著走"
                 )
         client = _build_client(p)
         _ensure_index(client, p.index, p.custom_mapping, p.settings)
