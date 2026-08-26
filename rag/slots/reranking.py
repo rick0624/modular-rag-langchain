@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from langchain_core.documents import Document
@@ -13,6 +14,7 @@ from pydantic import Field
 
 from rag.errors import APIResponseFormatError, RagError
 from rag.interfaces import RerankFn
+from rag.llm import build_text_llm
 from rag.registry import BaseParams, BuildContext, register, validate_params
 from rag.slots.api_utils import locate_list, post_json
 
@@ -30,6 +32,82 @@ def build_none(params: dict[str, Any], ctx: BuildContext) -> RerankFn:
 
     def rerank(query: str, documents: list[Document]) -> list[Document]:
         return list(documents)
+
+    return rerank
+
+
+_INSERTRANK_PROMPT = """\
+請依「與問題的相關程度」重新排序以下候選段落。每個段落附有{score_label}
+(僅供參考,InsertRank:分數與內容一併判斷)。只輸出排序後的段落編號,
+以逗號分隔(例如:2,1,3),不要其他文字。
+
+問題:{query}
+
+{documents}"""
+
+
+class _InsertRankParams(BaseParams):
+    top_k: int = Field(default=5, gt=0, description="重排後保留筆數")
+    score_label: str = Field(
+        default="檢索分數",
+        description="prompt 中分數的名稱,依上游據實描述(vector 檢索為相似度)",
+    )
+    prompt: str | None = Field(
+        default=None,
+        description="自訂 prompt(需含 {query} 與 {documents};None = 內建)",
+    )
+    llm: dict[str, Any] = Field(description="LLM 連線(見 rag/llm.py 的 llm 區塊說明)")
+
+
+def _parse_ranking(reply: str, total: int) -> list[int] | None:
+    """把 LLM 回覆解析成 1-based 名次序;完全解析不出來回傳 None。"""
+    order: list[int] = []
+    for match in re.findall(r"\d+", reply):
+        number = int(match)
+        if 1 <= number <= total and number not in order:
+            order.append(number)
+    return order or None
+
+
+@register("reranking", "insertrank")
+def build_insertrank(params: dict[str, Any], ctx: BuildContext) -> RerankFn:
+    """InsertRank:候選附檢索分數的 LLM listwise 重排。
+
+    解析不出 LLM 的排序回覆時 fail-soft:保留原檢索順序前 top_k 筆並記
+    WARNING;LLM 回覆中缺漏的候選補在後面(依原順序)。
+    """
+    p = validate_params("reranking", "insertrank", _InsertRankParams, params)
+    complete = build_text_llm("reranking", "insertrank", p.llm)
+    template = p.prompt or _INSERTRANK_PROMPT
+
+    def rerank(query: str, documents: list[Document]) -> list[Document]:
+        if not documents:
+            return []
+        lines = [
+            f"[{position}] ({p.score_label}={document.metadata.get('score', 0.0):.4f}) "
+            f"{document.page_content}"
+            for position, document in enumerate(documents, start=1)
+        ]
+        prompt = (
+            template.replace("{score_label}", p.score_label)
+            .replace("{query}", query)
+            .replace("{documents}", "\n".join(lines))
+        )
+        reply = complete(prompt)
+        order = _parse_ranking(reply, len(documents))
+        if order is None:
+            logger.warning(
+                "insertrank:無法解析 LLM 排序回覆(%r),保留原檢索順序", reply[:80]
+            )
+            return list(documents[: p.top_k])
+        chosen = set(order)
+        reranked = [documents[position - 1] for position in order]
+        reranked.extend(
+            document
+            for position, document in enumerate(documents, start=1)
+            if position not in chosen
+        )
+        return reranked[: p.top_k]
 
     return rerank
 

@@ -12,17 +12,8 @@ from langchain_core.messages import BaseMessage
 from pydantic import Field
 
 from rag.interfaces import GenerateFn
+from rag.llm import message_text
 from rag.registry import BaseParams, BuildContext, register, validate_params
-
-
-def message_text(message: Any) -> str:
-    """取出訊息的純文字;相容 text 為 property(core 1.x)或方法的版本。"""
-    text = getattr(message, "text", None)
-    if callable(text):
-        text = text()
-    if text is None:
-        text = str(getattr(message, "content", message))
-    return text
 
 
 class _MockParams(BaseParams):

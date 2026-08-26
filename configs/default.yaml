@@ -138,10 +138,30 @@ ingestion:
 
 inference:
   query_transformation:
-    method: passthrough             # 可選:passthrough / custom
+    # 可選:passthrough / llm_multi_hyde / preqrag / custom
     # 鏈(list[str] → list[str],可串接):method: [passthrough, custom]
+    method: passthrough
     method_params:
       passthrough: {}               # 原樣通過(無參數)
+      llm_multi_hyde:               # Multi-HyDE:LLM 生成 k 篇多角度假設文件
+        # num_documents: 3          # 預設 3:假設文件篇數
+        # keep_original: true       # 預設 true:原查詢 + 假設文件各自檢索後融合
+        # prompt: |                 # 預設:內建(需含 {query})
+        llm:                        # 必填:LLM 連線;離線示範用 mock,
+          provider: mock            #   實際接入改 openai_compatible:
+          replies: ["假設文件一\n假設文件二\n假設文件三"]
+          # provider: openai_compatible
+          # model: gpt-5-mini
+          # base_url: ...           # vLLM / Ollama / 公司閘道
+          # api_key: YOUR_TOKEN
+      preqrag:                      # PreQRAG:先分類 single/multi 再改寫或拆解
+        # num_rewrites: 2           # 預設 2:single 分支的改寫條數
+        # max_subqueries: 4         # 預設 4:multi 分支的子查詢數上限
+        # include_original: true    # 預設 true:原查詢也保留一路
+        # classify_prompt / rewrite_prompt / decompose_prompt: 預設內建(需含 {query})
+        llm:
+          provider: mock
+          replies: ["multi", "子問題一\n子問題二"]
       custom:                       # 自訂改寫 / 拆解(契約:queries → queries;
         file: ./my_transform.py     #   輸出多筆 = 逐子查詢檢索後由 fusion 合併)
 
@@ -154,9 +174,17 @@ inference:
         file: ./my_retrieval.py     #   外部欄位映射進 Document 是模組內部責任)
 
   reranking:
-    method: none                    # 可選:none / api / custom;鏈:[api, custom]
+    # 可選:none / api / insertrank / custom;鏈:[api, custom]
+    method: none
     method_params:
       none: {}                      # 不重排(無參數)
+      insertrank:                   # InsertRank:候選附檢索分數的 LLM listwise 重排
+        # top_k: 5                  # 預設 5
+        # score_label: 檢索分數      # prompt 中分數的名稱,依上游據實描述
+        # prompt: |                 # 預設:內建(需含 {query} 與 {documents})
+        llm:                        # 必填:LLM 連線(同 query_transformation 的 llm 區塊)
+          provider: mock
+          replies: ["2,1,3"]
       api:                          # 通用 HTTP rerank API(欄位對映)
         endpoint: https://rerank.example.com/v1/rerank   # 必填
         headers:                    # 預設 {}

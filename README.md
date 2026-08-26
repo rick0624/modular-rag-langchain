@@ -26,9 +26,9 @@ Inference:query ─ routing?(支線)           ▼
 | chunking | `recursive` | ✓ |
 | embedding | `mock`、`api`(HTTP API,欄位對映) | ✓ |
 | indexing | `in_memory`、`elasticsearch` | ✓ |
-| query_transformation | `passthrough`(可方法鏈) | ✓ |
+| query_transformation | `passthrough`、`llm_multi_hyde`、`preqrag`(可方法鏈) | ✓ |
 | retrieval | `vector` | ✓ |
-| reranking | `none`、`api`(HTTP API,欄位對映;可方法鏈) | ✓ |
+| reranking | `none`、`api`(HTTP API,欄位對映)、`insertrank`(LLM listwise;可方法鏈) | ✓ |
 | generation | `mock`、`openai_compatible`(OpenAI / vLLM / Ollama / 閘道) | ✓ |
 | evaluation | `retrieval_metrics`(hit_rate / MRR) | ✓ |
 | fusion | `merge`(去重 + 分數排序) | ✓ |
@@ -219,7 +219,9 @@ MVP 求簡,以下原版機制**刻意**不保留(需要時再加回):
 pipeline graph engine(改為循序函式)、建構期語意相容檢查
 (content_type / pages / 索引能力宣告)、ingestion 指紋與增量 ingest
 (以確定 chunk_id 的全量 upsert 取代;持久索引中已刪來源會留舊切片)、
-parsing 方法鏈與 PDF 解析(custom 可接)、LLM 查詢改寫 / 拆解 / 重排
-的內建方法(llm_rewrite / decompose / HyDE / insertrank;自訂 transform
-即可接回,多子查詢 + fusion 的通道仍在)、sentence-transformers 與
-cross-encoder 本地模型、in-memory BM25 / hybrid、實驗掃描腳本。
+parsing 方法鏈與 PDF 解析(custom 可接)、llm_rewrite / llm_decompose
+與 glossary / jargon 查詢轉換(llm_multi_hyde / preqrag / insertrank
+已加回;自訂 transform 也可接,多子查詢 + fusion 的通道仍在)、
+「generator 沿用 generation 槽位」機制(各方法以 llm: 區塊自帶連線,
+共用連線用 YAML anchor)、sentence-transformers 與 cross-encoder
+本地模型、in-memory BM25 / hybrid、實驗掃描腳本。
