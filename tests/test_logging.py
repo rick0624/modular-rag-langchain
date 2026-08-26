@@ -31,6 +31,32 @@ def test_debug_logs_cover_each_step(make_config, caplog):
         assert marker in caplog.text, f"缺少 log 標記:{marker}"
 
 
+def test_setup_logging_writes_debug_file(tmp_path, make_config):
+    from rag.logging_setup import setup_logging
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    log_path = tmp_path / "logs" / "rag.log"  # 父目錄不存在 → 自動建立
+    try:
+        setup_logging(console_level="warning", log_file=log_path)
+        runtime = build_runtime(make_config())
+        ingest(runtime)
+        query(runtime, "VPN 伺服器位址?")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        text = log_path.read_text(encoding="utf-8")
+        # terminal 等級是 warning,但檔案收到 DEBUG 全量
+        assert "DEBUG rag.core: [import]" in text
+        assert "[prompt]" in text
+        assert "query 完成" in text
+    finally:
+        for handler in root.handlers[:]:
+            if handler not in saved_handlers:
+                handler.close()
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
 def test_step_failure_logged_with_slot_name(make_config, caplog):
     runtime = build_runtime(
         make_config(

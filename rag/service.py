@@ -155,15 +155,26 @@ def main() -> None:
         "--log-level",
         default=os.environ.get("RAG_LOG_LEVEL", "info"),
         choices=["debug", "info", "warning", "error"],
-        help="log 等級(預設:$RAG_LOG_LEVEL 或 info);debug 會印出每步的"
-        "輸入輸出摘要與完整 prompt",
+        help="terminal 輸出等級(預設:$RAG_LOG_LEVEL 或 info);"
+        "log 檔一律收 DEBUG 全量",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=os.environ.get("RAG_LOG_FILE", "logs/rag.log"),
+        help="log 檔路徑(預設:$RAG_LOG_FILE 或 logs/rag.log;"
+        "自動輪替 10MB × 3 份)",
+    )
+    parser.add_argument(
+        "--no-log-file", action="store_true", help="不寫 log 檔,只輸出到 terminal"
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    from rag.logging_setup import setup_logging
+
+    log_file = None if args.no_log_file else args.log_file
+    setup_logging(args.log_level, log_file)
+    if log_file is not None:
+        logger.info("log 檔:%s(DEBUG 全量;terminal 等級:%s)", log_file, args.log_level)
 
     import uvicorn
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 
 from rag import build_runtime, evaluate, ingest, load_config, query
 
@@ -23,13 +22,17 @@ def main() -> None:
         "--log-level",
         default="warning",
         choices=["debug", "info", "warning"],
-        help="log 等級(預設 warning 保持輸出乾淨;debug 印出每步細節)",
+        help="terminal 輸出等級(預設 warning 保持輸出乾淨)",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="log 檔路徑(如 logs/rag.log;檔案一律收 DEBUG 全量,預設不寫檔)",
     )
     args = parser.parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="%(levelname)s %(name)s: %(message)s",
-    )
+    from rag.logging_setup import setup_logging
+
+    setup_logging(args.log_level, args.log_file)
 
     runtime = build_runtime(load_config(args.config))  # 建構期即驗證 config
 

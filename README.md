@@ -92,18 +92,24 @@ python try_rag.py --query "特休假滿兩年有幾天?"
 單 worker + 全域 lock(in_memory 索引在行程內,多 worker 會各有一份
 互不相通的索引)。
 
-### Debug
+### Debug 與 log 檔
+
+service 預設把 log 寫到 **`logs/rag.log`**(自動輪替 10MB × 3 份;
+`--log-file` 改路徑、`--no-log-file` 關閉、環境變數 `RAG_LOG_FILE`):
 
 ```bash
-python -m rag.service --config configs/default.yaml --log-level debug
-python try_rag.py --log-level debug
+python -m rag.service --config configs/default.yaml
+tail -f logs/rag.log                                   # 追檔案即可 debug
+python try_rag.py --log-file logs/rag.log              # 腳本預設不寫檔,要再開
 ```
 
-DEBUG 等級會印出 pipeline 每一步的細節:各步驟的開始/完成與耗時、
-匯入的來源清單、每文件切片數、每條子查詢檢索與重排後的
-(chunk_id, score) 前段、融合結果、**實際送 LLM 的完整 prompt**、
+分工:**log 檔一律收 DEBUG 全量**(出問題時細節已在檔案裡,不必調高
+等級重跑),terminal 用 `--log-level` 控制(預設 info,只留每次
+ingest / query 的一行摘要)。DEBUG 內容涵蓋 pipeline 每一步:各步驟的
+開始/完成與耗時、匯入的來源清單、每文件切片數、每條子查詢檢索與重排後
+的 (chunk_id, score) 前段、融合結果、**實際送 LLM 的完整 prompt**、
 答案預覽;步驟失敗時 ERROR log 直接標明是哪個槽位的哪個方法炸掉。
-INFO 等級只留每次 ingest / query 的一行摘要。
+httpx / elasticsearch 等第三方套件在檔案中壓到 INFO,不會洗版。
 
 ## 換方法 = 改一行 config
 
