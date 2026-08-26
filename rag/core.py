@@ -107,8 +107,15 @@ class Runtime:
     index_fields: dict[str, str] = field(default_factory=dict)
 
 
-def build_runtime(config: RAGConfig) -> Runtime:
-    """依 config 建構全部槽位;任何方法或參數錯誤都在這裡直接報錯。"""
+def build_runtime(config: RAGConfig, *, store: Any = None) -> Runtime:
+    """依 config 建構全部槽位;任何方法或參數錯誤都在這裡直接報錯。
+
+    Args:
+        store: 注入既有的 vector store(跳過 indexing 槽位建構)。
+            供實驗掃描等場景讓 ingestion 相同的多組 config 共用同一個
+            索引 —— 注入的 store 必須由**相同的 ingestion 設定**建出
+            (同 embedding 設定才保證同向量空間)。
+    """
     import rag.slots  # noqa: F401  # import 即完成內建方法註冊
 
     ctx = BuildContext(config=config)
@@ -123,7 +130,9 @@ def build_runtime(config: RAGConfig) -> Runtime:
     if source_field:
         # store 持有的是包裝後的物件 → indexing / 查詢端都走同一份。
         ctx.embeddings = SourceFieldEmbeddings(ctx.embeddings, source_field)
-    ctx.store = build_slot("indexing", ingestion.indexing, ctx)
+    ctx.store = store if store is not None else build_slot(
+        "indexing", ingestion.indexing, ctx
+    )
 
     transform = build_slot(
         "query_transformation", inference.query_transformation, ctx

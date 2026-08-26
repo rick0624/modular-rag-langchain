@@ -146,6 +146,27 @@ curl -X POST localhost:8000/ingest -d '{}'   # 首次啟動後建索引
 `layout: flat`,改用 Haystack 式扁平文件(全欄位頂層,由框架自行讀寫,
 搭配 `fields` 白名單效果與舊版一致)。
 
+## 實驗:批次比較方法組合
+
+`experiment.py`(repo 根目錄)可以程式化生成多組 config、逐組跑查詢與
+評估、比較結果 —— 改頂部「實驗定義」區塊後:
+
+```bash
+python experiment.py
+# [OK]   baseline            各題檢回 [3, 3]  hit_rate=1.000  mrr=1.000
+# [OK]   reranking=custom(…) 各題檢回 [3, 3]  hit_rate=1.000  mrr=1.000
+```
+
+- 兩種模式:`one_at_a_time`(基線 + 每次動一個槽位)/ `product`(全交叉)
+- 選項四種寫法:字串(只換 method)、list(方法鏈)、dict(整槽位替換,
+  可帶參數)、bundle(key 含「.」的 dict,多槽位綁定一起換,`_label` 命名)
+- **ingestion 相同的組合共用同一個索引**(只重建 inference 端),掃
+  inference 方法不重複 embed 語料;ES 實驗中不同 ingestion 變體請用
+  不同 `index` 名
+- config 有 `evaluation` 區塊時每組合自動算 hit_rate / MRR;單一壞組合
+  記 error 不中斷整批;也可 `from experiment import run_experiments`
+  在自己的腳本接原始結果
+
 ## 自訂模組(custom):一個 function 就能掛
 
 任何槽位都可以 `method: custom` 掛自己的 .py 檔,**不必改框架、不必寫
