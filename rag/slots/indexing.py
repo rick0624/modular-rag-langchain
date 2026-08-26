@@ -56,6 +56,32 @@ class _ElasticsearchParams(BaseParams):
         description="index settings(analyzer、index.default_pipeline 等);"
         "必須搭配 custom_mapping",
     )
+    request_timeout: float | None = Field(
+        default=None,
+        description="單一請求逾時秒數;None = client 預設(10 秒)。整批 bulk "
+        "寫入超過時 writer 會拋 Connection timed out",
+    )
+    retry_on_timeout: bool | None = Field(
+        default=None,
+        description="逾時是否自動重試;None = client 預設(false)。"
+        "線路間歇不穩時開啟(連線層錯誤 client 本來就會重試,本參數只擴及逾時)",
+    )
+    max_retries: int | None = Field(
+        default=None,
+        description="單次請求的最大重試次數;None = client 預設(3)",
+    )
+
+
+def _client_options(p: "_ElasticsearchParams") -> dict[str, Any]:
+    """組出 ES client 的連線韌性選項(只帶有設定的鍵,其餘交給 client 預設)。"""
+    options: dict[str, Any] = {}
+    if p.request_timeout is not None:
+        options["request_timeout"] = p.request_timeout
+    if p.retry_on_timeout is not None:
+        options["retry_on_timeout"] = p.retry_on_timeout
+    if p.max_retries is not None:
+        options["max_retries"] = p.max_retries
+    return options
 
 
 def _ensure_index(
@@ -81,7 +107,7 @@ def _ensure_index(
 def _build_client(p: "_ElasticsearchParams") -> Any:
     from elasticsearch import Elasticsearch
 
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = _client_options(p)
     if p.api_key is not None:
         kwargs["api_key"] = p.api_key
     if p.username is not None:
@@ -130,11 +156,12 @@ def build_elasticsearch(params: dict[str, Any], ctx: BuildContext) -> VectorStor
                 )
         client = _build_client(p)
         _ensure_index(client, p.index, p.custom_mapping, p.settings)
-        return ElasticsearchStore(es_connection=client, **store_kwargs)
+        return ElasticsearchStore(client=client, **store_kwargs)
     return ElasticsearchStore(
         es_url=p.es_url,
         es_user=p.username,
         es_password=p.password,
         es_api_key=p.api_key,
+        es_params=_client_options(p) or None,
         **store_kwargs,
     )

@@ -47,6 +47,40 @@ def test_ensure_index_without_settings_omits_key():
     assert "settings" not in client.indices.created[0]
 
 
+def test_client_options_only_carries_set_keys():
+    from rag.slots.indexing import _ElasticsearchParams, _client_options
+
+    defaults = _ElasticsearchParams(es_url="http://localhost:9200")
+    assert _client_options(defaults) == {}
+
+    tuned = _ElasticsearchParams(
+        es_url="http://localhost:9200",
+        request_timeout=60,
+        retry_on_timeout=True,
+        max_retries=5,
+    )
+    assert _client_options(tuned) == {
+        "request_timeout": 60,
+        "retry_on_timeout": True,
+        "max_retries": 5,
+    }
+
+
+def test_elasticsearchstore_param_names_compatible():
+    """守住我們傳給 ElasticsearchStore 的參數名(升版改名時在此炸出來)。"""
+    import inspect
+
+    from langchain_elasticsearch import ElasticsearchStore
+
+    accepted = inspect.signature(ElasticsearchStore.__init__).parameters
+    for name in (
+        "index_name", "embedding", "client", "es_url", "es_user",
+        "es_password", "es_api_key", "es_params", "query_field",
+        "vector_query_field",
+    ):
+        assert name in accepted, f"ElasticsearchStore 已無參數 {name}"
+
+
 def _es_config(make_config, **extra):
     return make_config(
         **{
