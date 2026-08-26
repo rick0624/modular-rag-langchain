@@ -16,8 +16,19 @@ from rag.errors import ConfigError
 from rag.registry import BaseParams, BuildContext, register, validate_params
 
 
-class _InMemoryParams(BaseParams):
-    """in_memory 不接受任何參數。"""
+class _CommonIndexingParams(BaseParams):
+    """所有 indexing 方法共通的參數(由框架的 ingest 流程消費)。"""
+
+    fields: dict[str, str] | None = Field(
+        default=None,
+        description="自訂欄位白名單 + 改名 {索引欄位名: meta 欄位名};"
+        "None = 自訂 meta 欄位全帶。設定後未列出的自訂欄位不寫入索引;"
+        "框架欄位(doc_id/seq/page/chunk_id)與 extra_vectors 向量欄位永遠保留",
+    )
+
+
+class _InMemoryParams(_CommonIndexingParams):
+    """in_memory 只接受共通參數。"""
 
 
 @register("indexing", "in_memory")
@@ -29,7 +40,7 @@ def build_in_memory(params: dict[str, Any], ctx: BuildContext) -> VectorStore:
     return InMemoryVectorStore(embedding=ctx.embeddings)
 
 
-class _ElasticsearchParams(BaseParams):
+class _ElasticsearchParams(_CommonIndexingParams):
     es_url: str = Field(description="Elasticsearch 位址,如 http://localhost:9200")
     index: str = Field(
         default="modular-rag",

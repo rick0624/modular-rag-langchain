@@ -82,8 +82,18 @@ ingestion:
 
   indexing:
     method: in_memory               # 可選:in_memory / elasticsearch / custom
+    # 所有方法(含 custom)都支援框架層參數 fields(白名單 + 改名):
+    #   fields:                     # 預設 None = 自訂 meta 欄位全帶。設定後
+    #     sum_text: summary         #   = 白名單:{索引欄位名: meta 欄位名},
+    #     dept: department          #   未列出的自訂欄位不寫入;框架欄位
+    #                               #   (doc_id/chunk_id/seq/page)與
+    #                               #   extra_vectors 向量欄位永遠保留。
+    #                               #   注意:改的是 metadata 內的鍵名(ES 上
+    #                               #   仍是巢狀 metadata.*;要拉頂層用
+    #                               #   settings 的 index.default_pipeline)。
+    #                               #   改對映請重建索引
     method_params:
-      in_memory: {}                 # 行程內索引(無參數;service 重啟即消失)
+      in_memory: {}                 # 行程內索引(service 重啟即消失)
       elasticsearch:
         es_url: http://localhost:9200   # 必填
         # 索引名建議帶上 embedding 模型:ES 的 dense_vector 維度建立後

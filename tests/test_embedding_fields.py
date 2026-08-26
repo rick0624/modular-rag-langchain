@@ -128,6 +128,65 @@ def test_extra_vectors_reserved_name_rejected(make_config, field_chunker):
         )
 
 
+def test_index_fields_whitelist_and_rename(make_config, field_chunker):
+    runtime = build_runtime(
+        make_config(
+            **{
+                "ingestion.chunking": field_chunker,
+                "ingestion.indexing": {
+                    "method": "in_memory",
+                    "params": {"fields": {"sum_text": "summary"}},
+                },
+            }
+        )
+    )
+    ingest(runtime)
+
+    metadata = runtime.store.store["vpn.txt::chunk_0"]["metadata"]
+    assert metadata["sum_text"]  # 列出的欄位改名寫入
+    assert "summary" not in metadata and "title" not in metadata  # 未列出的不寫入
+    for key in ("doc_id", "seq", "page", "chunk_id"):
+        assert key in metadata  # 框架欄位永遠保留
+
+
+def test_index_fields_keeps_extra_vectors_without_listing(make_config, field_chunker):
+    runtime = build_runtime(
+        make_config(
+            **{
+                "ingestion.chunking": field_chunker,
+                "ingestion.embedding": {
+                    "method": "mock",
+                    "params": {"dim": 64, "extra_vectors": {"title_vector": "title"}},
+                },
+                "ingestion.indexing": {
+                    "method": "in_memory",
+                    "params": {"fields": {"sum_text": "summary"}},
+                },
+            }
+        )
+    )
+    ingest(runtime)
+    metadata = runtime.store.store["vpn.txt::chunk_0"]["metadata"]
+    assert "title_vector" in metadata  # 向量欄位自動保留(來源欄位 title 被白名單丟掉也不影響)
+    assert "title" not in metadata
+
+
+def test_index_fields_reserved_target_rejected(make_config):
+    from rag.errors import ConfigError as _ConfigError
+
+    with pytest.raises(_ConfigError, match="保留名"):
+        build_runtime(
+            make_config(
+                **{
+                    "ingestion.indexing": {
+                        "method": "in_memory",
+                        "params": {"fields": {"doc_id": "summary"}},
+                    }
+                }
+            )
+        )
+
+
 def test_source_field_must_be_nonempty_string(make_config):
     with pytest.raises(ConfigError, match="source_field"):
         build_runtime(

@@ -104,6 +104,7 @@ class Runtime:
     evaluator: EvaluateFn | None
     source_field: str | None = None
     extra_vectors: dict[str, str] = field(default_factory=dict)
+    index_fields: dict[str, str] = field(default_factory=dict)
 
 
 def build_runtime(config: RAGConfig) -> Runtime:
@@ -158,6 +159,7 @@ def build_runtime(config: RAGConfig) -> Runtime:
         evaluator=evaluator,
         source_field=source_field,
         extra_vectors=extra_vectors,
+        index_fields=_indexing_field_options(ingestion.indexing, extra_vectors),
     )
 
 
@@ -304,6 +306,10 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
     if runtime.source_field:
         logger.debug("[embedding] source_field=%s:主向量改用該欄位", runtime.source_field)
         runtime.embeddings.feed(_field_texts(chunks, runtime.source_field, "source_field"))
+    if runtime.index_fields:
+        # 必須在 extra_vectors 與 source_field 取值「之後」:白名單丟掉的
+        # 欄位仍可作為向量來源。
+        _apply_index_fields(runtime, chunks)
     try:
         _traced(
             trace,
@@ -333,6 +339,62 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
         "elapsed_ms": elapsed_ms,
         "steps": trace,
     }
+
+
+def _indexing_field_options(
+    cfg: MethodConfig, extra_vectors: dict[str, str]
+) -> dict[str, str]:
+    """讀出 indexing 的 fields(白名單 + 改名)並驗證欄位名。
+
+    ``fields: {索引欄位名: meta 欄位名}``:設定後只有列出的自訂欄位會寫入
+    索引(改用左邊的名字);框架欄位(doc_id/seq/page/chunk_id)與
+    extra_vectors 的向量欄位永遠保留。由框架的 ingest 流程消費,
+    所有 indexing 方法(含 custom)都支援。
+    """
+    fields = cfg.params_for().get("fields") or {}
+    if not isinstance(fields, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) and key and value
+        for key, value in fields.items()
+    ):
+        raise ConfigError(
+            "indexing 的 fields 必須是 {索引欄位名: meta 欄位名} 的字串對映,"
+            f"實際得到:{fields!r}"
+        )
+    reserved = set(META_KEYS) | {"score"}
+    bad = sorted(reserved & set(fields))
+    if bad:
+        raise ConfigError(
+            f"indexing 的 fields 目標欄位名不可使用框架保留名 {bad}"
+            f"(框架欄位永遠自動保留,不需列入);保留名:{sorted(reserved)}"
+        )
+    clash = sorted(set(extra_vectors) & set(fields))
+    if clash:
+        raise ConfigError(
+            f"indexing 的 fields 目標欄位名 {clash} 與 extra_vectors 的向量"
+            "欄位名衝突;向量欄位自動保留,不需列入 fields"
+        )
+    return dict(fields)
+
+
+def _apply_index_fields(runtime: Runtime, chunks: list[Document]) -> None:
+    """依 fields 白名單重組切片 metadata(寫入索引前的最後一步)。
+
+    重組後:框架欄位 + extra_vectors 向量欄位 + fields 列出的欄位
+    (改名);未列出的自訂欄位不寫入。來源欄位缺漏時跳過該鍵(自訂
+    欄位可能非每個切片都有),不視為錯誤。
+    """
+    keep = set(META_KEYS) | set(runtime.extra_vectors)
+    for chunk in chunks:
+        original = chunk.metadata
+        rebuilt = {key: original[key] for key in keep if key in original}
+        for target, source in runtime.index_fields.items():
+            if source in original:
+                rebuilt[target] = original[source]
+        chunk.metadata = rebuilt
+    logger.debug(
+        "[indexing] fields 白名單生效:%s(框架欄位與向量欄位自動保留)",
+        runtime.index_fields,
+    )
 
 
 def _field_texts(chunks: list[Document], field_name: str, purpose: str) -> list[str]:
