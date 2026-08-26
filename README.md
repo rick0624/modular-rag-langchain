@@ -141,7 +141,10 @@ curl -X POST localhost:8000/ingest -d '{}'   # 首次啟動後建索引
 注意:ES 的 `dense_vector` 維度建立後不可變,換 embedding 模型 / 維度時
 請換 `index` 名稱;`embedding: api` 與 `reranking: api` 的請求 / 回應
 欄位名都可用參數對映(預設 OpenAI 式),形狀不同時對照錯誤訊息中列出的
-實際欄位調整 `*_field` 參數即可。
+實際欄位調整 `*_field` 參數即可。ES 文件 layout 預設是 langchain 慣例
+(自訂欄位巢狀在 `metadata.*`);外部系統要直接讀欄位時設
+`layout: flat`,改用 Haystack 式扁平文件(全欄位頂層,由框架自行讀寫,
+搭配 `fields` 白名單效果與舊版一致)。
 
 ## 自訂模組(custom):一個 function 就能掛
 

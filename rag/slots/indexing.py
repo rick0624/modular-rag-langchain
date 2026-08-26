@@ -7,13 +7,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Literal
 
+from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore, VectorStore
 from pydantic import Field
 
-from rag.errors import ConfigError
+from rag.errors import ComponentError, ConfigError
 from rag.registry import BaseParams, BuildContext, register, validate_params
+
+logger = logging.getLogger(__name__)
 
 
 class _CommonIndexingParams(BaseParams):
@@ -67,6 +71,12 @@ class _ElasticsearchParams(_CommonIndexingParams):
         description="index settings(analyzer、index.default_pipeline 等);"
         "必須搭配 custom_mapping",
     )
+    layout: Literal["nested", "flat"] = Field(
+        default="nested",
+        description="文件 layout:nested = langchain-elasticsearch 慣例"
+        "(自訂欄位在巢狀 metadata.* 內);flat = Haystack 式扁平文件"
+        "(所有欄位在頂層,方便外部系統直接讀,由框架自行讀寫)",
+    )
     request_timeout: float | None = Field(
         default=None,
         description="單一請求逾時秒數;None = client 預設(10 秒)。整批 bulk "
@@ -115,6 +125,111 @@ def _ensure_index(
     return True
 
 
+class FlatElasticsearchStore:
+    """Haystack 式扁平 layout 的 ES store(由框架自行讀寫,不經 langchain)。
+
+    文件形狀:``{query_field: 內文, vector_query_field: 主向量,
+    doc_id, seq, page, chunk_id, ...自訂欄位}`` —— 全部頂層欄位,
+    外部系統可直接讀,與舊 Haystack 版索引 layout 對齊。
+
+    索引不存在時於首次寫入自動建立(內文 text + 向量 dense_vector,
+    dims 取自實際向量;要釘 analyzer / 欄位型別請用 custom_mapping)。
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Any,
+        index: str,
+        embeddings: Any,
+        query_field: str = "text",
+        vector_query_field: str = "vector",
+    ) -> None:
+        self.client = client
+        self.index = index
+        self.embeddings = embeddings
+        self.query_field = query_field
+        self.vector_query_field = vector_query_field
+
+    def _ensure_default_index(self, dims: int) -> None:
+        if self.client.indices.exists(index=self.index):
+            return
+        self.client.indices.create(
+            index=self.index,
+            mappings={
+                "properties": {
+                    self.query_field: {"type": "text"},
+                    self.vector_query_field: {"type": "dense_vector", "dims": dims},
+                }
+            },
+        )
+        logger.info("已建立扁平 layout 索引 '%s'(dims=%d)", self.index, dims)
+
+    def add_documents(self, documents: list[Document], ids: list[str] | None = None) -> list[str]:
+        if not documents:
+            return []
+        doc_ids = ids or [doc.id for doc in documents]
+        vectors = self.embeddings.embed_documents(
+            [doc.page_content for doc in documents]
+        )
+        self._ensure_default_index(dims=len(vectors[0]))
+        operations: list[dict[str, Any]] = []
+        for doc_id, document, vector in zip(doc_ids, documents, vectors):
+            clash = {self.query_field, self.vector_query_field} & set(document.metadata)
+            if clash:
+                raise ComponentError(
+                    f"切片 '{doc_id}' 的 metadata 欄位 {sorted(clash)} 與扁平 "
+                    f"layout 的內文/向量欄位名衝突;請改欄位名,或以 "
+                    "query_field / vector_query_field 錯開"
+                )
+            operations.append({"index": {"_index": self.index, "_id": doc_id}})
+            operations.append(
+                {
+                    self.query_field: document.page_content,
+                    self.vector_query_field: vector,
+                    **document.metadata,
+                }
+            )
+        response = self.client.bulk(operations=operations, refresh="wait_for")
+        if response.get("errors"):
+            failed = [
+                item["index"].get("error")
+                for item in response.get("items", [])
+                if item.get("index", {}).get("error")
+            ]
+            raise ComponentError(
+                f"扁平 layout bulk 寫入失敗 {len(failed)} 筆;第一筆錯誤:{failed[:1]}"
+            )
+        return list(doc_ids)
+
+    def similarity_search_with_score(
+        self, query: str, k: int = 4
+    ) -> list[tuple[Document, float]]:
+        query_vector = self.embeddings.embed_query(query)
+        response = self.client.search(
+            index=self.index,
+            knn={
+                "field": self.vector_query_field,
+                "query_vector": query_vector,
+                "k": k,
+                "num_candidates": max(50, k * 5),
+            },
+            size=k,
+        )
+        results: list[tuple[Document, float]] = []
+        for hit in response["hits"]["hits"]:
+            source = dict(hit["_source"])
+            content = source.pop(self.query_field, "")
+            source.pop(self.vector_query_field, None)  # 主向量不進 metadata
+            results.append(
+                (
+                    Document(id=hit["_id"], page_content=content, metadata=source),
+                    float(hit["_score"]),
+                )
+            )
+        return results
+
+
 def _build_client(p: "_ElasticsearchParams") -> Any:
     from elasticsearch import Elasticsearch
 
@@ -147,14 +262,6 @@ def build_elasticsearch(params: dict[str, Any], ctx: BuildContext) -> VectorStor
             "(否則框架無從得知內文與向量欄位的宣告);"
             "只想自訂 mapping 時可單獨設定 custom_mapping"
         )
-    from langchain_elasticsearch import ElasticsearchStore
-
-    store_kwargs: dict[str, Any] = {
-        "index_name": p.index,
-        "embedding": ctx.embeddings,
-        "query_field": p.query_field,
-        "vector_query_field": p.vector_query_field,
-    }
     if p.custom_mapping is not None:
         declared = sorted(p.custom_mapping.get("properties", {}))
         for field in (p.query_field, p.vector_query_field):
@@ -170,6 +277,28 @@ def build_elasticsearch(params: dict[str, Any], ctx: BuildContext) -> VectorStor
                     "embedding),請同步設定 query_field / vector_query_field "
                     "指向它們,讀寫與本檢查都會跟著走"
                 )
+
+    if p.layout == "flat":
+        client = _build_client(p)
+        if p.custom_mapping is not None:
+            _ensure_index(client, p.index, p.custom_mapping, p.settings)
+        return FlatElasticsearchStore(
+            client=client,
+            index=p.index,
+            embeddings=ctx.embeddings,
+            query_field=p.query_field,
+            vector_query_field=p.vector_query_field,
+        )
+
+    from langchain_elasticsearch import ElasticsearchStore
+
+    store_kwargs: dict[str, Any] = {
+        "index_name": p.index,
+        "embedding": ctx.embeddings,
+        "query_field": p.query_field,
+        "vector_query_field": p.vector_query_field,
+    }
+    if p.custom_mapping is not None:
         client = _build_client(p)
         _ensure_index(client, p.index, p.custom_mapping, p.settings)
         return ElasticsearchStore(client=client, **store_kwargs)

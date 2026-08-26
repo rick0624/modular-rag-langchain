@@ -96,6 +96,12 @@ ingestion:
       in_memory: {}                 # 行程內索引(service 重啟即消失)
       elasticsearch:
         es_url: http://localhost:9200   # 必填
+        # layout: nested            # 預設 nested = langchain 慣例(自訂欄位在
+        #                           #   巢狀 metadata.* 內)。flat = Haystack 式
+        #                           #   扁平文件:內文/向量/框架欄位/自訂欄位
+        #                           #   全在頂層,外部系統可直接讀(由框架自行
+        #                           #   讀寫;搭配 fields 白名單效果同舊版)。
+        #                           #   換 layout 請換索引名重建
         # 索引名建議帶上 embedding 模型:ES 的 dense_vector 維度建立後
         # 不可變更,換模型/維度就得換索引(或先刪掉重建)。
         index: modular-rag          # 預設 "modular-rag"
