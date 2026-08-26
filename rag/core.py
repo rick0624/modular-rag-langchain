@@ -221,19 +221,48 @@ def _stamp_chunks(chunks: list[Document]) -> list[Document]:
     return chunks
 
 
+def _preview(text: str, limit: int = 120) -> str:
+    """log 用的單行預覽(截斷 + 摺疊換行)。"""
+    flat = str(text).replace("\n", "\\n")
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def _doc_scores(documents: list[Document], limit: int = 5) -> list[tuple[str, Any]]:
+    """log 用:前 N 筆的 (chunk_id, score)。"""
+    return [
+        (
+            doc.metadata.get("chunk_id", doc.id or "?"),
+            round(doc.metadata["score"], 4) if "score" in doc.metadata else None,
+        )
+        for doc in documents[:limit]
+    ]
+
+
 def _traced(
     trace: list[dict[str, Any]], slot: str, cfg: MethodConfig | None, fn: Callable[[], Any]
 ) -> Any:
-    """執行一步並附加 trace 紀錄(slot / method / count / elapsed_ms)。"""
+    """執行一步並附加 trace 紀錄(slot / method / count / elapsed_ms)。
+
+    同時打兩條 DEBUG log(開始 / 完成);步驟丟例外時記 ERROR 標明
+    是哪個槽位、哪個方法炸掉,再原樣往上拋。
+    """
+    method = "+".join(cfg.methods()) if cfg else None
+    logger.debug("[%s] 開始(method=%s)", slot, method)
     start = time.perf_counter()
-    result = fn()
-    entry: dict[str, Any] = {
-        "slot": slot,
-        "method": "+".join(cfg.methods()) if cfg else None,
-        "elapsed_ms": round((time.perf_counter() - start) * 1000, 1),
-    }
+    try:
+        result = fn()
+    except Exception as exc:
+        logger.error(
+            "[%s] 失敗(method=%s):%s: %s", slot, method, type(exc).__name__, exc
+        )
+        raise
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+    entry: dict[str, Any] = {"slot": slot, "method": method, "elapsed_ms": elapsed_ms}
     if isinstance(result, list):
         entry["count"] = len(result)
+        logger.debug("[%s] 完成:%d 筆,%.1f ms", slot, len(result), elapsed_ms)
+    else:
+        logger.debug("[%s] 完成:%.1f ms", slot, elapsed_ms)
     trace.append(entry)
     return result
 
@@ -244,17 +273,36 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
     trace: list[dict[str, Any]] = []
     start = time.perf_counter()
 
+    logger.info("ingest 開始")
     sources = _traced(trace, "import", ingestion.import_, runtime.importer)
+    logger.debug(
+        "[import] 來源 %d 筆:%s%s",
+        len(sources),
+        [source.doc_id for source in sources[:10]],
+        "…" if len(sources) > 10 else "",
+    )
     documents = _traced(
         trace, "parsing", ingestion.parsing, lambda: runtime.parser(sources)
+    )
+    logger.debug(
+        "[parsing] %d 份文件,總字數 %d",
+        len(documents),
+        sum(len(doc.page_content) for doc in documents),
     )
     chunks = _traced(
         trace, "chunking", ingestion.chunking, lambda: runtime.chunker(documents)
     )
     chunks = _stamp_chunks(chunks)
+    if logger.isEnabledFor(logging.DEBUG):
+        per_doc: dict[str, int] = {}
+        for chunk in chunks:
+            per_doc[chunk.metadata["doc_id"]] = per_doc.get(chunk.metadata["doc_id"], 0) + 1
+        logger.debug("[chunking] %d 個切片;每文件切片數:%s", len(chunks), per_doc)
     if runtime.extra_vectors:
+        logger.debug("[embedding] extra_vectors:%s", runtime.extra_vectors)
         _add_extra_vectors(runtime, chunks)
     if runtime.source_field:
+        logger.debug("[embedding] source_field=%s:主向量改用該欄位", runtime.source_field)
         runtime.embeddings.feed(_field_texts(chunks, runtime.source_field, "source_field"))
     try:
         _traced(
@@ -274,10 +322,15 @@ def ingest(runtime: Runtime) -> dict[str, Any]:
                     "少於傳入數),已清空", leftover,
                 )
 
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info(
+        "ingest 完成:寫入 %d 個切片(%d 份來源),%.0f ms",
+        len(chunks), len(sources), elapsed_ms,
+    )
     return {
         "documents_written": len(chunks),
         "files": [source.doc_id for source in sources],
-        "elapsed_ms": round((time.perf_counter() - start) * 1000, 1),
+        "elapsed_ms": elapsed_ms,
         "steps": trace,
     }
 
@@ -317,12 +370,16 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
         raise ComponentError("查詢內容不可為空")
     inference = runtime.config.inference
     trace: list[dict[str, Any]] = []
+    start = time.perf_counter()
+    logger.info("query 開始:%s", _preview(text))
 
     routing = (
         _traced(trace, "routing", inference.routing, lambda: runtime.route(text))
         if runtime.route
         else None
     )
+    if routing is not None:
+        logger.debug("[routing] 結果:%s", routing)
 
     subqueries = _traced(
         trace,
@@ -332,17 +389,29 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
     )
     if not subqueries:
         subqueries = [text]
+    logger.debug(
+        "[query_transformation] %d 條子查詢:%s",
+        len(subqueries),
+        [_preview(subquery, 60) for subquery in subqueries],
+    )
 
     results: list[list[Document]] = []
     for subquery in subqueries:
         retrieved = _traced(
             trace, "retrieval", inference.retrieval, lambda: runtime.retrieve(subquery)
         )
+        logger.debug(
+            "[retrieval] 子查詢 %r → %d 筆,前段:%s",
+            _preview(subquery, 40), len(retrieved), _doc_scores(retrieved),
+        )
         reranked = _traced(
             trace,
             "reranking",
             inference.reranking,
             lambda: runtime.rerank(subquery, retrieved),
+        )
+        logger.debug(
+            "[reranking] 重排後 %d 筆,前段:%s", len(reranked), _doc_scores(reranked)
         )
         results.append(reranked)
 
@@ -352,6 +421,9 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
         inference.fusion or MethodConfig(method="merge"),  # 省略時實際生效的是 merge
         lambda: runtime.fuse(results),
     )
+    logger.debug(
+        "[fusion] 融合後 %d 筆:%s", len(documents), _doc_scores(documents, limit=10)
+    )
 
     prompt_cfg = inference.prompt
     messages, prompt = build_messages(
@@ -360,9 +432,11 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
         template=prompt_cfg.template if prompt_cfg else None,
         system=prompt_cfg.system if prompt_cfg else None,
     )
+    logger.debug("[prompt] 實際送 LLM 的內容(%d 字):\n%s", len(prompt), prompt)
     answer = _traced(
         trace, "generation", inference.generation, lambda: runtime.generate(messages)
     )
+    logger.debug("[generation] 答案(%d 字):%s", len(answer), _preview(answer))
 
     output = (
         _traced(
@@ -374,7 +448,13 @@ def query(runtime: Runtime, text: str) -> dict[str, Any]:
         if runtime.format
         else None
     )
+    if output is not None:
+        logger.debug("[formatter] payload 型別:%s", type(output).__name__)
 
+    logger.info(
+        "query 完成:%d 筆引用,answer %d 字,%.0f ms",
+        len(documents), len(answer), (time.perf_counter() - start) * 1000,
+    )
     return {
         "answer": answer,
         "prompt": prompt,

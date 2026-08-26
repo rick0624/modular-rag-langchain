@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 
 from rag import build_runtime, evaluate, ingest, load_config, query
 
@@ -18,7 +19,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="modular-rag-langchain 試跑")
     parser.add_argument("--config", default="configs/default.yaml", help="YAML 設定檔路徑")
     parser.add_argument("--query", default="VPN 伺服器位址與連接埠是多少?", help="查詢文字")
+    parser.add_argument(
+        "--log-level",
+        default="warning",
+        choices=["debug", "info", "warning"],
+        help="log 等級(預設 warning 保持輸出乾淨;debug 印出每步細節)",
+    )
     args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     runtime = build_runtime(load_config(args.config))  # 建構期即驗證 config
 

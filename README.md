@@ -88,8 +88,22 @@ python try_rag.py --query "特休假滿兩年有幾天?"
 
 環境變數:`RAG_CONFIG`(config 路徑,`--config` 優先)、
 `RAG_INGEST_ON_STARTUP`(`auto` 預設 = in_memory 才自動 ingest /
-`always` / `never`)。並行模型:單 worker + 全域 lock(in_memory 索引在
-行程內,多 worker 會各有一份互不相通的索引)。
+`always` / `never`)、`RAG_LOG_LEVEL`(`--log-level` 優先)。並行模型:
+單 worker + 全域 lock(in_memory 索引在行程內,多 worker 會各有一份
+互不相通的索引)。
+
+### Debug
+
+```bash
+python -m rag.service --config configs/default.yaml --log-level debug
+python try_rag.py --log-level debug
+```
+
+DEBUG 等級會印出 pipeline 每一步的細節:各步驟的開始/完成與耗時、
+匯入的來源清單、每文件切片數、每條子查詢檢索與重排後的
+(chunk_id, score) 前段、融合結果、**實際送 LLM 的完整 prompt**、
+答案預覽;步驟失敗時 ERROR log 直接標明是哪個槽位的哪個方法炸掉。
+INFO 等級只留每次 ingest / query 的一行摘要。
 
 ## 換方法 = 改一行 config
 

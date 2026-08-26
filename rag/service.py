@@ -151,10 +151,18 @@ def main() -> None:
     )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("RAG_LOG_LEVEL", "info"),
+        choices=["debug", "info", "warning", "error"],
+        help="log 等級(預設:$RAG_LOG_LEVEL 或 info);debug 會印出每步的"
+        "輸入輸出摘要與完整 prompt",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
     import uvicorn
