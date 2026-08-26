@@ -160,18 +160,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-file",
-        default=os.environ.get("RAG_LOG_FILE", "logs/rag.log"),
-        help="log 檔路徑(預設:$RAG_LOG_FILE 或 logs/rag.log;"
-        "自動輪替 10MB × 3 份)",
+        default=os.environ.get("RAG_LOG_FILE"),
+        help="log 檔路徑(預設:logs/rag-<啟動時間>.log,每次啟動一個新檔;"
+        "$RAG_LOG_FILE 或本參數可改成固定路徑;單檔超過 10MB 自動輪替)",
     )
     parser.add_argument(
         "--no-log-file", action="store_true", help="不寫 log 檔,只輸出到 terminal"
     )
     args = parser.parse_args()
 
-    from rag.logging_setup import setup_logging
+    from rag.logging_setup import default_log_file, setup_logging
 
-    log_file = None if args.no_log_file else args.log_file
+    log_file = None if args.no_log_file else (args.log_file or default_log_file())
     setup_logging(args.log_level, log_file)
     if log_file is not None:
         logger.info("log 檔:%s(DEBUG 全量;terminal 等級:%s)", log_file, args.log_level)

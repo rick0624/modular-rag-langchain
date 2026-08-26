@@ -94,13 +94,16 @@ python try_rag.py --query "特休假滿兩年有幾天?"
 
 ### Debug 與 log 檔
 
-service 預設把 log 寫到 **`logs/rag.log`**(自動輪替 10MB × 3 份;
-`--log-file` 改路徑、`--no-log-file` 關閉、環境變數 `RAG_LOG_FILE`):
+service 與 `try_rag.py` 每次執行都會寫一個**帶 timestamp 的 log 檔**
+(`logs/rag-20260826-091530.log` 這樣,不同次執行不覆寫、不混寫;
+單檔超過 10MB 自動輪替)。`--log-file` 可改成固定路徑、`--no-log-file`
+關閉、環境變數 `RAG_LOG_FILE`(service);舊檔不自動清理,占空間時
+自行刪 `logs/`:
 
 ```bash
 python -m rag.service --config configs/default.yaml
-tail -f logs/rag.log                                   # 追檔案即可 debug
-python try_rag.py --log-file logs/rag.log              # 腳本預設不寫檔,要再開
+# 啟動 log 會印出本次的檔名,追它即可 debug:
+tail -f logs/rag-*.log
 ```
 
 分工:**log 檔一律收 DEBUG 全量**(出問題時細節已在檔案裡,不必調高

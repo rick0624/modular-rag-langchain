@@ -57,6 +57,16 @@ def test_setup_logging_writes_debug_file(tmp_path, make_config):
         root.setLevel(saved_level)
 
 
+def test_default_log_file_has_timestamp(tmp_path):
+    import re
+
+    from rag.logging_setup import default_log_file
+
+    path = default_log_file(tmp_path / "logs")
+    assert path.parent == tmp_path / "logs"
+    assert re.fullmatch(r"rag-\d{8}-\d{6}\.log", path.name), path.name
+
+
 def test_step_failure_logged_with_slot_name(make_config, caplog):
     runtime = build_runtime(
         make_config(

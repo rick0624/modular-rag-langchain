@@ -27,12 +27,19 @@ def main() -> None:
     parser.add_argument(
         "--log-file",
         default=None,
-        help="log 檔路徑(如 logs/rag.log;檔案一律收 DEBUG 全量,預設不寫檔)",
+        help="log 檔路徑(預設:logs/rag-<執行時間>.log,每次執行一個新檔;"
+        "檔案一律收 DEBUG 全量)",
+    )
+    parser.add_argument(
+        "--no-log-file", action="store_true", help="不寫 log 檔,只輸出到 terminal"
     )
     args = parser.parse_args()
-    from rag.logging_setup import setup_logging
+    from rag.logging_setup import default_log_file, setup_logging
 
-    setup_logging(args.log_level, args.log_file)
+    log_file = None if args.no_log_file else (args.log_file or default_log_file())
+    setup_logging(args.log_level, log_file)
+    if log_file is not None:
+        print(f"log 檔:{log_file}(DEBUG 全量)")
 
     runtime = build_runtime(load_config(args.config))  # 建構期即驗證 config
 

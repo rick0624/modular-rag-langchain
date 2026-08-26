@@ -7,10 +7,20 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def default_log_file(log_dir: str | Path = "logs") -> Path:
+    """預設 log 檔路徑:每次執行一個帶 timestamp 的檔名。
+
+    例如 ``logs/rag-20260826-091530.log`` —— 不同次執行各自一個檔案,
+    不會覆寫或混寫;舊檔不自動清理,占空間時自行刪 ``logs/``。
+    """
+    return Path(log_dir) / f"rag-{datetime.now():%Y%m%d-%H%M%S}.log"
 
 # 檔案收 DEBUG 時,壓低吵雜的第三方套件(它們的 DEBUG 是連線細節)。
 _NOISY_LIBS = ("httpx", "httpcore", "urllib3", "elastic_transport", "openai")
