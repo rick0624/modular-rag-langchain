@@ -1,8 +1,6 @@
 # modular-rag-langchain
 
-模組化 RAG(Retrieval-Augmented Generation,檢索增強生成)框架,
-[modular-rag-final](https://github.com/rick0624/modular-rag-final)
-(Haystack 版)的 LangChain 簡化版。
+模組化 RAG(Retrieval-Augmented Generation,檢索增強生成)框架。
 
 - RAG 的流程:先從知識庫**檢索**相關內容,再把內容連同問題交給 LLM **生成**回答。
 - 本專案的核心是**十三個模組**,每個模組有多種可換的方法。
@@ -11,7 +9,6 @@
 - 底層用 [LangChain](https://python.langchain.com/) 當零件庫
   (Document、切分器、vector store、LLM 客戶端);流程本身是純 Python
   循序函式,沒有 pipeline graph 引擎,從上往下讀就是整條管線。
-- 以 **FastAPI service** 形式執行(ingestion / inference 都是 HTTP 端點)。
 - 完全離線也能跑:內建 mock embedding 與 mock LLM,不需金鑰、不需網路。
 
 ```
@@ -24,27 +21,15 @@ Evaluation: 測試集逐題查詢 → hit rate / MRR                            
 
 ```bash
 pip install -r requirements.txt
-python -m rag.service --config configs/default.yaml
-```
-
-啟動後(預設配置全離線,會自動 ingest `data/raw/` 的樣本文件):
-
-```bash
-curl -X POST localhost:8000/query \
-  -H 'content-type: application/json' \
-  -d '{"query": "VPN 伺服器位址與連接埠是多少?"}'
-```
-
-不起 service、直接跑一輪 建索引 → 查詢 → 評估(請在 repo 根目錄執行):
-
-```bash
 python try_rag.py
 ```
 
-跑測試(也全部離線):
+執行後會看到(全程離線):建索引 → 查詢 → 印出檢索結果、送給 LLM 的
+prompt、回答與每步 trace,最後是評估分數(hit_rate / mrr)。
 
 ```bash
-python -m pytest
+python try_rag.py --query "特休假滿兩年有幾天?"    # 指定問題
+python -m pytest                                  # 跑測試(也全部離線)
 ```
 
 ## 十三個模組
@@ -97,12 +82,12 @@ rag/                      框架本體
   core.py                 核心流程:build_runtime / ingest / query / evaluate
   prompts.py              prompt 組裝(切片帶 [chunk_id] 前綴,可稽核)
   llm.py                  LLM 連線共用底座(llm: 參數區塊)
-  service.py              FastAPI service
+  service.py              FastAPI service(選用)
   logging_setup.py        log 檔設定
   slots/                  各模組的內建方法(一檔一槽位)
 examples/custom_modules/  自訂模組範本(13 個槽位各一份,複製來改)
 data/                     範例語料與評估集(qa.jsonl)
-try_rag.py                不起 service 的試跑腳本
+try_rag.py                主要執行入口:建索引 → 查詢 → 評估
 experiment.py             管線組合實驗(批次比較不同方法組合)
 tests/                    測試(全部離線,不碰網路)
 docs/interfaces.md        模組契約的完整說明
@@ -114,31 +99,40 @@ docs/interfaces.md        模組契約的完整說明
 
 ## 執行、測試與實驗
 
-Service 端點:
+```bash
+python try_rag.py                                   # 預設設定檔,全流程
+python try_rag.py --query "你的問題"                 # 指定問題
+python try_rag.py --config configs/online.yaml      # 指定設定檔
+python -m pytest                                    # 全部測試(離線)
+python experiment.py                                # 批次比較方法組合
+```
+
+- **每次執行都會寫一個帶時間戳的 log 檔**(`logs/rag-*.log`),檔案收
+  DEBUG 全量:每步耗時、改寫後的子查詢、檢索與重排的 (chunk_id, score)、
+  實際送 LLM 的完整 prompt。除錯就 `tail -f logs/rag-*.log`,
+  terminal 保持乾淨(`--no-log-file` 可關閉)。
+- `experiment.py`:改頂部「實驗定義」區塊,批次生成多組 config 逐組跑
+  (基線 + 每次換一個槽位,或全交叉);ingestion 相同的組合共用索引、
+  不重複 embed 語料;每組合自動算 hit_rate / MRR 印成總表。
+  詳見腳本開頭的說明。
+
+### 以服務形式執行(選用)
+
+同一套流程也可以用 FastAPI service 提供 HTTP 端點:
+
+```bash
+python -m rag.service --config configs/default.yaml
+```
 
 | 端點 | 說明 |
 |---|---|
 | `GET /health` | 服務狀態 |
 | `POST /ingest` | 重讀設定檔、全量重建索引(切片 id 固定,重跑即 upsert 不倍增) |
-| `POST /query` | `{"query": "..."}` → answer、documents、實際送 LLM 的 prompt、每步 trace |
-| `POST /evaluate` | 跑評估(hit_rate / MRR);省略 body 用設定檔的 evaluation 區塊 |
+| `POST /query` | `{"query": "..."}` → answer、documents、prompt、每步 trace |
+| `POST /evaluate` | 跑評估(hit_rate / MRR) |
 
-- 錯誤一律回 400 + 繁中訊息(指出收到什麼、期望什麼、該調哪個欄位)。
-- 環境變數:`RAG_CONFIG`(設定檔路徑)、`RAG_INGEST_ON_STARTUP`、
-  `RAG_LOG_LEVEL` / `RAG_LOG_FILE`。
-- **每次執行都會寫一個帶時間戳的 log 檔**(`logs/rag-*.log`),檔案收
-  DEBUG 全量(每步耗時、檢索分數、完整 prompt);除錯就
-  `tail -f logs/rag-*.log`,terminal 保持乾淨。
-
-```bash
-python -m pytest              # 全部測試(離線)
-python experiment.py          # 批次比較方法組合
-```
-
-`experiment.py`:改頂部「實驗定義」區塊,批次生成多組 config 逐組跑
-(基線 + 每次換一個槽位,或全交叉);ingestion 相同的組合共用索引、
-不重複 embed 語料;每組合自動算 hit_rate / MRR 印成總表。
-詳見腳本開頭的說明。
+錯誤一律回 400 + 繁中訊息。環境變數:`RAG_CONFIG`、
+`RAG_INGEST_ON_STARTUP`、`RAG_LOG_LEVEL` / `RAG_LOG_FILE`。
 
 ## 設定檔怎麼用
 
@@ -161,7 +155,7 @@ python experiment.py          # 批次比較方法組合
 - **金鑰注入**:設定值可寫 `${ENV_VAR}`,載入時從環境變數(或 `.env`)
   展開,金鑰不進版控。
 - **錯誤提早報**:方法名打錯、參數打錯、custom 函式簽名不符,都在
-  service 啟動時就報錯,訊息會指出位置與可用的選項。
+  啟動時就報錯,訊息會指出位置與可用的選項。
 
 完整的方法與參數示範都在 [configs/default.yaml](configs/default.yaml),
 建議直接打開看。
@@ -171,16 +165,16 @@ python experiment.py          # 批次比較方法組合
 1. 設定檔選用 `configs/online.yaml`(API embedding + Elasticsearch +
    API rerank + LLM 已配置好形狀)
 2. 填金鑰:`cp .env.example .env`,填入 API 位址、金鑰與 ES 連線資訊
-3. 啟動:`python -m rag.service --config configs/online.yaml`
-4. 建索引:`curl -X POST localhost:8000/ingest -d '{}'`(ES 是持久索引,
-   啟動時不會自動 ingest)
+3. 跑起來:`python try_rag.py --config configs/online.yaml --query "測試問題"`
+   (會建索引 → 查詢 → 評估;ES 是 upsert,重跑不會倍增)
 
 ES 的三個注意事項:
 
 - `dense_vector` 維度建立後不可變:換 embedding 模型/維度時請換
   `index` 名稱重建。
-- 外部系統要直接讀索引欄位時,設 `layout: flat`(Haystack 式扁平文件,
-  搭配 `fields` 白名單);預設 layout 的自訂欄位在巢狀 `metadata.*`。
+- 外部系統要直接讀索引欄位時,設 `layout: flat`(扁平文件:所有欄位
+  在頂層,搭配 `fields` 白名單);預設 layout 的自訂欄位在巢狀
+  `metadata.*`。
 - API 形狀對不上時:embedding / rerank 用 `*_field` 參數對映欄位名;
   LLM 閘道不吃 model 欄位時用 `provider: gateway` /
   `generation: gateway_openai_compatible`。
@@ -216,7 +210,8 @@ def build(params, ctx):
       top_k: 3                  # file / function 以外的鍵透傳給 build
 ```
 
-**3. 跑起來驗證**:啟動 service 或 `python try_rag.py`,看 trace。
+**3. 跑起來驗證**:`python try_rag.py --config configs/my.yaml`,
+看輸出與 log 裡的 trace。
 
 `ctx` 帶 `config` / `embeddings` / `store`,需要時可取用(例如自訂
 retrieval 直接查 `ctx.store`)。簽名寫錯的話**啟動時**就會報錯並指明
@@ -226,17 +221,3 @@ retrieval 直接查 `ctx.store`)。簽名寫錯的話**啟動時**就會報錯�
 檔案加一個 `@register(槽位, 方法名)` 的 builder 函式即可,框架其他
 部分零改動。embedding 的進階參數(`source_field` 挑欄位做向量、
 `extra_vectors` 多向量)見 default.yaml 型錄的註解。
-
-## 與 Haystack 版的差異
-
-- **執行引擎**:Haystack 的 component + pipeline graph → LangChain
-  零件 + 純 Python 循序函式(`rag/core.py` 從上往下讀就是整條流程)。
-- **資料物件**:Haystack `Document` → LangChain `Document`
-  (`content`→`page_content`、`meta`→`metadata`);框架保證的
-  metadata 鍵(doc_id / seq / page / chunk_id)與舊版相同。
-- **自訂模組**:Haystack `@component` class → 一個 builder function。
-- **沒有增量 ingest 與 ingestion 指紋**:`/ingest` 一律全量重建,
-  靠固定的 chunk_id upsert 保持冪等。
-- 未搬過來的方法(sentence-transformers、cross-encoder、BM25/hybrid、
-  glossary / jargon / llm_rewrite / llm_decompose、PDF 解析等)都可以
-  用 custom 接回,或之後加進內建型錄。

@@ -5,7 +5,7 @@
 # 目前啟用的組合完全離線:mock embedding + in_memory 索引 + mock 生成,
 # 不需網路、金鑰或模型下載,適合開發與試跑:
 #
-#   python -m rag.service --config configs/default.yaml
+#   python try_rag.py --config configs/default.yaml
 #
 # 註解慣例:
 #   - 被註解掉的參數 = 選填,取消註解即可覆寫預設值。
@@ -97,10 +97,10 @@ ingestion:
       elasticsearch:
         es_url: http://localhost:9200   # 必填
         # layout: nested            # 預設 nested = langchain 慣例(自訂欄位在
-        #                           #   巢狀 metadata.* 內)。flat = Haystack 式
-        #                           #   扁平文件:內文/向量/框架欄位/自訂欄位
-        #                           #   全在頂層,外部系統可直接讀(由框架自行
-        #                           #   讀寫;搭配 fields 白名單效果同舊版)。
+        #                           #   巢狀 metadata.* 內)。flat = 扁平文件:
+        #                           #   內文/向量/框架欄位/自訂欄位全在頂層,
+        #                           #   外部系統可直接讀(由框架自行讀寫,
+        #                           #   可搭配 fields 白名單)。
         #                           #   換 layout 請換索引名重建
         # 索引名建議帶上 embedding 模型:ES 的 dense_vector 維度建立後
         # 不可變更,換模型/維度就得換索引(或先刪掉重建)。
@@ -112,7 +112,7 @@ ingestion:
         # --- 自訂 mapping / settings(進階)---
         # 僅在索引不存在、由框架建立時生效;已存在的索引原樣沿用。
         # 注意欄位名是 LangChain 慣例:內文欄位預設 text、向量欄位預設
-        # vector(舊 Haystack 版是 content / embedding);要用別的名字請
+        # vector(有些既有索引慣用 content / embedding);要用別的名字請
         # 同步設定 query_field / vector_query_field。設定 custom_mapping
         # 時,建構期就會連線 ES 檢查索引是否存在。
         # custom_mapping:           # 預設 None = 內建 mapping。完整覆蓋:

@@ -74,7 +74,7 @@ class _ElasticsearchParams(_CommonIndexingParams):
     layout: Literal["nested", "flat"] = Field(
         default="nested",
         description="文件 layout:nested = langchain-elasticsearch 慣例"
-        "(自訂欄位在巢狀 metadata.* 內);flat = Haystack 式扁平文件"
+        "(自訂欄位在巢狀 metadata.* 內);flat = 扁平文件"
         "(所有欄位在頂層,方便外部系統直接讀,由框架自行讀寫)",
     )
     request_timeout: float | None = Field(
@@ -126,11 +126,11 @@ def _ensure_index(
 
 
 class FlatElasticsearchStore:
-    """Haystack 式扁平 layout 的 ES store(由框架自行讀寫,不經 langchain)。
+    """扁平 layout 的 ES store(由框架自行讀寫,不經 langchain)。
 
     文件形狀:``{query_field: 內文, vector_query_field: 主向量,
     doc_id, seq, page, chunk_id, ...自訂欄位}`` —— 全部頂層欄位,
-    外部系統可直接讀,與舊 Haystack 版索引 layout 對齊。
+    外部系統可直接讀。
 
     索引不存在時於首次寫入自動建立(內文 text + 向量 dense_vector,
     dims 取自實際向量;要釘 analyzer / 欄位型別請用 custom_mapping)。
@@ -273,7 +273,7 @@ def build_elasticsearch(params: dict[str, Any], ctx: BuildContext) -> VectorStor
                     f"(query_field: {p.query_field})與向量欄位"
                     f"(vector_query_field: {p.vector_query_field},"
                     "type: dense_vector,dims = embedding 維度)。"
-                    "若 mapping 沿用其他欄位名(如舊 Haystack 版的 content / "
+                    "若 mapping 沿用其他欄位名(如既有索引慣用的 content / "
                     "embedding),請同步設定 query_field / vector_query_field "
                     "指向它們,讀寫與本檢查都會跟著走"
                 )
