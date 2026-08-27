@@ -25,13 +25,17 @@ from rag.slots.api_utils import post_json
 
 
 def message_text(message: Any) -> str:
-    """取出訊息的純文字;相容 text 為 property(core 1.x)或方法的版本。"""
+    """取出訊息的純文字;相容 text 為 property(core 1.x)或方法的版本。
+
+    注意順序:core 1.x 的 ``.text`` property 回傳「可呼叫的 str 相容
+    物件」(呼叫會觸發棄用警告),所以先認 str 再考慮呼叫。
+    """
     text = getattr(message, "text", None)
+    if isinstance(text, str):
+        return str(text)
     if callable(text):
-        text = text()
-    if text is None:
-        text = str(getattr(message, "content", message))
-    return text
+        return str(text())
+    return str(getattr(message, "content", message))
 
 
 class _LlmParams(BaseParams):
