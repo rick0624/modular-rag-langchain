@@ -1,248 +1,242 @@
 # modular-rag-langchain
 
-模組化 RAG 框架的 **LangChain 版 MVP**:整條 pipeline 由單一 YAML config
-控制,13 個模組(槽位)各自可獨立替換實作 —— 換方法只改 config 的
-`method` 一行;自訂實作用**一個 function** 就能掛進來,不必寫 class、
-不必改框架。以 **ingestion / inference service**(FastAPI)形式執行。
+模組化 RAG(Retrieval-Augmented Generation,檢索增強生成)框架,
+[modular-rag-final](https://github.com/rick0624/modular-rag-final)
+(Haystack 版)的 LangChain 簡化版。
 
-本專案是 [modular-rag-final](https://github.com/rick0624/modular-rag-final)
-(Haystack 版)的簡化遷移:模組邊界與介面契約承襲原設計,執行引擎改為
-LangChain 元件 + 純 Python 循序流程(捨棄清單見文末)。
+- RAG 的流程:先從知識庫**檢索**相關內容,再把內容連同問題交給 LLM **生成**回答。
+- 本專案的核心是**十三個模組**,每個模組有多種可換的方法。
+  換方法只要改 YAML 設定檔的一行,不用改程式。
+- 自訂實作用**一個 function** 就能掛進來,不必寫 class、不必改框架。
+- 底層用 [LangChain](https://python.langchain.com/) 當零件庫
+  (Document、切分器、vector store、LLM 客戶端);流程本身是純 Python
+  循序函式,沒有 pipeline graph 引擎,從上往下讀就是整條管線。
+- 以 **FastAPI service** 形式執行(ingestion / inference 都是 HTTP 端點)。
+- 完全離線也能跑:內建 mock embedding 與 mock LLM,不需金鑰、不需網路。
 
 ```
-Ingestion:import → parsing → chunking → embedding → indexing
-                                              │(同一個 Embeddings 物件)
-Inference:query ─ routing?(支線)           ▼
-           └→ query_transformation → [逐子查詢:retrieval → reranking]
-              → fusion → formatter?(支線)→ prompt 組裝 → generation
+Ingestion:  Import → Parsing → Chunking → Embedding → Indexing        (建索引)
+Inference:  查詢 → Query Transformation → 檢索 → 重排 → 融合 → 生成    (回答問題)
+Evaluation: 測試集逐題查詢 → hit rate / MRR                            (評估品質)
 ```
 
-## 模組與內建方法
-
-| 模組 | 內建方法 | custom |
-|---|---|---|
-| import | `local_files` | ✓ |
-| parsing | `text`(txt/md) | ✓(PDF / OCR 由此接) |
-| chunking | `recursive` | ✓ |
-| embedding | `mock`、`api`(HTTP API,欄位對映) | ✓ |
-| indexing | `in_memory`、`elasticsearch` | ✓ |
-| query_transformation | `passthrough`、`llm_multi_hyde`、`preqrag`(可方法鏈) | ✓ |
-| retrieval | `vector` | ✓ |
-| reranking | `none`、`api`(HTTP API,欄位對映)、`insertrank`(LLM listwise;可方法鏈) | ✓ |
-| generation | `mock`、`openai_compatible`(OpenAI / vLLM / Ollama)、`gateway_openai_compatible`(公司閘道,可不帶 model 欄位) | ✓ |
-| evaluation | `retrieval_metrics`(hit_rate / MRR) | ✓ |
-| fusion | `merge`(去重 + 分數排序) | ✓ |
-| routing(選填) | `keyword_match` | ✓ |
-| formatter(選填) | `simple_json` | ✓ |
-
-各方法的完整參數見 `configs/default.yaml`(同時是「方法型錄」:所有方法
-的參數區塊並存,只有被選中的會生效與驗證);模組間的輸入輸出契約見
-[docs/interfaces.md](docs/interfaces.md)。
-
-## 快速開始(完全離線)
-
-預設配置不需網路、金鑰或模型下載(mock embedding + in_memory 索引 +
-mock 生成):
+## Quick Start
 
 ```bash
 pip install -r requirements.txt
 python -m rag.service --config configs/default.yaml
 ```
 
-啟動時會自動 ingest `data/raw/` 的樣本文件(in_memory 索引;持久索引
-見下方環境變數說明),然後:
+啟動後(預設配置全離線,會自動 ingest `data/raw/` 的樣本文件):
 
 ```bash
-curl localhost:8000/health
 curl -X POST localhost:8000/query \
   -H 'content-type: application/json' \
   -d '{"query": "VPN 伺服器位址與連接埠是多少?"}'
-curl -X POST localhost:8000/ingest -H 'content-type: application/json' -d '{}'
-curl -X POST localhost:8000/evaluate -H 'content-type: application/json' -d '{}'
 ```
 
-測試(全離線):
+不起 service、直接跑一輪 建索引 → 查詢 → 評估(請在 repo 根目錄執行):
+
+```bash
+python try_rag.py
+```
+
+跑測試(也全部離線):
 
 ```bash
 python -m pytest
 ```
 
-不起 service、直接用 Python API 試跑一輪 ingest → query → evaluate
-(適合快速實驗 config 組合;請在 repo 根目錄執行):
+## 十三個模組
 
-```bash
-python try_rag.py
-python try_rag.py --query "特休假滿兩年有幾天?"
+每個模組(在設定檔中叫「槽位」)負責流程中的一件事。
+`custom` 是共通選項:掛上自己寫的 function(見[新增自訂方法](#新增自訂方法))。
+
+**Ingestion(建索引)**
+
+| 模組 | 做什麼 | 可用方法 |
+|---|---|---|
+| 1 Import | 找出要匯入的文件 | `local_files` / `custom` |
+| 2 Parsing | 把文件轉成純文字 | `text` / `custom`(PDF、OCR 由此接) |
+| 3 Chunking | 把長文切成小段(切片) | `recursive` / `custom` |
+| 4 Embedding | 把切片轉成向量 | `mock` / `api` / `custom` |
+| 5 Indexing | 把切片與向量存進索引 | `in_memory` / `elasticsearch` / `custom` |
+
+**Inference(回答問題)**
+
+| 模組 | 做什麼 | 可用方法 |
+|---|---|---|
+| 6 Query Transformation | 改寫查詢讓檢索更準 | `passthrough` / `llm_multi_hyde` / `preqrag` / `custom` |
+| 7 Retrieval | 從索引找出相關切片 | `vector` / `custom` |
+| 8 Reranking | 把檢索結果重新排序 | `none` / `api` / `insertrank` / `custom` |
+| 9 Generation | 用 LLM 生成回答 | `mock` / `openai_compatible` / `gateway_openai_compatible` / `custom` |
+| 10 Evaluation | 算檢索品質指標 | `retrieval_metrics` / `custom` |
+
+**選填模組**(設定檔省略 = 用預設或不做):
+
+| 模組 | 做什麼 | 可用方法 |
+|---|---|---|
+| fusion | 多個子查詢的結果融合(省略 = merge 預設參數) | `merge` / `custom` |
+| routing | 查詢分類(結果附在輸出上,不影響檢索) | `keyword_match` / `custom` |
+| formatter | 把最終結果組成對外格式 | `simple_json` / `custom` |
+
+每個方法的參數與預設值,直接看 [configs/default.yaml](configs/default.yaml)
+(它同時是「方法型錄」:所有方法的參數區塊並存展示,每個參數都有註解);
+模組之間的輸入輸出契約見 [docs/interfaces.md](docs/interfaces.md)。
+
+## 專案結構
+
+```
+configs/
+  default.yaml            預設設定檔,也是「方法型錄」:所有方法與參數都展示在裡面
+  online.yaml             線上組合示範(API embedding + ES + API rerank + LLM)
+rag/                      框架本體
+  config.py               設定檔載入、驗證、${ENV_VAR} 展開
+  interfaces.py           模組契約:各槽位的函式簽名、Source / EvalCase
+  registry.py             方法註冊表、custom 載入與簽名驗證
+  core.py                 核心流程:build_runtime / ingest / query / evaluate
+  prompts.py              prompt 組裝(切片帶 [chunk_id] 前綴,可稽核)
+  llm.py                  LLM 連線共用底座(llm: 參數區塊)
+  service.py              FastAPI service
+  logging_setup.py        log 檔設定
+  slots/                  各模組的內建方法(一檔一槽位)
+examples/custom_modules/  自訂模組範本(13 個槽位各一份,複製來改)
+data/                     範例語料與評估集(qa.jsonl)
+try_rag.py                不起 service 的試跑腳本
+experiment.py             管線組合實驗(批次比較不同方法組合)
+tests/                    測試(全部離線,不碰網路)
+docs/interfaces.md        模組契約的完整說明
+.env.example              金鑰範本(複製成 .env 填入)
 ```
 
-### Service 端點
+需要 Python 3.10+;`requirements.txt` 內含 `-e .`,會把 `rag` 套件裝進
+環境,自己的腳本才能 `import rag`。
+
+## 執行、測試與實驗
+
+Service 端點:
 
 | 端點 | 說明 |
 |---|---|
-| `GET /health` | 服務狀態、config 路徑、索引方法 |
-| `POST /ingest` | 重讀 config → 全量重建索引(切片 id 確定 → 重跑即 upsert 不倍增)|
-| `POST /query` | `{"query": "..."}` → `{answer, prompt, documents, subqueries, routing, output, trace}` |
-| `POST /evaluate` | 跑評估;`{"cases": [...]}` 行內給題,省略則用 config 的 evaluation 設定 |
+| `GET /health` | 服務狀態 |
+| `POST /ingest` | 重讀設定檔、全量重建索引(切片 id 固定,重跑即 upsert 不倍增) |
+| `POST /query` | `{"query": "..."}` → answer、documents、實際送 LLM 的 prompt、每步 trace |
+| `POST /evaluate` | 跑評估(hit_rate / MRR);省略 body 用設定檔的 evaluation 區塊 |
 
-錯誤一律回 400 + 繁中訊息(指出收到什麼、期望什麼、該調哪個欄位)。
-
-環境變數:`RAG_CONFIG`(config 路徑,`--config` 優先)、
-`RAG_INGEST_ON_STARTUP`(`auto` 預設 = in_memory 才自動 ingest /
-`always` / `never`)、`RAG_LOG_LEVEL`(`--log-level` 優先)。並行模型:
-單 worker + 全域 lock(in_memory 索引在行程內,多 worker 會各有一份
-互不相通的索引)。
-
-### Debug 與 log 檔
-
-service 與 `try_rag.py` 每次執行都會寫一個**帶 timestamp 的 log 檔**
-(`logs/rag-20260826-091530.log` 這樣,不同次執行不覆寫、不混寫;
-單檔超過 10MB 自動輪替)。`--log-file` 可改成固定路徑、`--no-log-file`
-關閉、環境變數 `RAG_LOG_FILE`(service);舊檔不自動清理,占空間時
-自行刪 `logs/`:
+- 錯誤一律回 400 + 繁中訊息(指出收到什麼、期望什麼、該調哪個欄位)。
+- 環境變數:`RAG_CONFIG`(設定檔路徑)、`RAG_INGEST_ON_STARTUP`、
+  `RAG_LOG_LEVEL` / `RAG_LOG_FILE`。
+- **每次執行都會寫一個帶時間戳的 log 檔**(`logs/rag-*.log`),檔案收
+  DEBUG 全量(每步耗時、檢索分數、完整 prompt);除錯就
+  `tail -f logs/rag-*.log`,terminal 保持乾淨。
 
 ```bash
-python -m rag.service --config configs/default.yaml
-# 啟動 log 會印出本次的檔名,追它即可 debug:
-tail -f logs/rag-*.log
+python -m pytest              # 全部測試(離線)
+python experiment.py          # 批次比較方法組合
 ```
 
-分工:**log 檔一律收 DEBUG 全量**(出問題時細節已在檔案裡,不必調高
-等級重跑),terminal 用 `--log-level` 控制(預設 info,只留每次
-ingest / query 的一行摘要)。DEBUG 內容涵蓋 pipeline 每一步:各步驟的
-開始/完成與耗時、匯入的來源清單、每文件切片數、每條子查詢檢索與重排後
-的 (chunk_id, score) 前段、融合結果、**實際送 LLM 的完整 prompt**、
-答案預覽;步驟失敗時 ERROR log 直接標明是哪個槽位的哪個方法炸掉。
-httpx / elasticsearch 等第三方套件在檔案中壓到 INFO,不會洗版。
+`experiment.py`:改頂部「實驗定義」區塊,批次生成多組 config 逐組跑
+(基線 + 每次換一個槽位,或全交叉);ingestion 相同的組合共用索引、
+不重複 embed 語料;每組合自動算 hit_rate / MRR 印成總表。
+詳見腳本開頭的說明。
 
-## 換方法 = 改一行 config
+## 設定檔怎麼用
+
+一個設定檔描述一整條 pipeline。每個模組固定這個形狀:
 
 ```yaml
   reranking:
-    method: none          # ← 換成 api 或 custom 就完成替換
-    method_params:
+    method: none                # 用哪個方法:改這一行就換方法
+    method_params:              # 各方法的參數,分區並存
       none: {}
-      api: { endpoint: ..., top_k: 5 }   # 各方法的參數並存,互不干擾
+      api:                      # 沒被選中的區塊放著不影響
+        endpoint: https://rerank.example.com/v1/rerank
+        top_k: 5
 ```
 
-`params`(扁平)與 `method_params`(分方法區塊)兩種寫法並存時,
-`method_params` 中有當前方法的區塊者優先。機密以 `${ENV_VAR}` 注入
-(自動載入 `.env`,見 `.env.example`);`query_transformation` 與
-`reranking` 支援方法鏈:`method: [api, custom]` 依序執行。
+只有一個方法時也可以寫扁平的 `params:`。要點:
 
-線上組合(API embedding + Elasticsearch + API rerank + OpenAI 相容生成)
-見 `configs/online.yaml`:
+- **方法鏈**:query_transformation、reranking 可以把 `method` 寫成清單
+  依序執行,例如 `method: [api, custom]`。
+- **金鑰注入**:設定值可寫 `${ENV_VAR}`,載入時從環境變數(或 `.env`)
+  展開,金鑰不進版控。
+- **錯誤提早報**:方法名打錯、參數打錯、custom 函式簽名不符,都在
+  service 啟動時就報錯,訊息會指出位置與可用的選項。
 
-```bash
-cp .env.example .env   # 填入實際的 API 位址與金鑰
-python -m rag.service --config configs/online.yaml
-curl -X POST localhost:8000/ingest -d '{}'   # 首次啟動後建索引
-```
+完整的方法與參數示範都在 [configs/default.yaml](configs/default.yaml),
+建議直接打開看。
 
-注意:ES 的 `dense_vector` 維度建立後不可變,換 embedding 模型 / 維度時
-請換 `index` 名稱;`embedding: api` 與 `reranking: api` 的請求 / 回應
-欄位名都可用參數對映(預設 OpenAI 式),形狀不同時對照錯誤訊息中列出的
-實際欄位調整 `*_field` 參數即可。ES 文件 layout 預設是 langchain 慣例
-(自訂欄位巢狀在 `metadata.*`);外部系統要直接讀欄位時設
-`layout: flat`,改用 Haystack 式扁平文件(全欄位頂層,由框架自行讀寫,
-搭配 `fields` 白名單效果與舊版一致)。
+## 接上公司環境
 
-## 實驗:批次比較方法組合
+1. 設定檔選用 `configs/online.yaml`(API embedding + Elasticsearch +
+   API rerank + LLM 已配置好形狀)
+2. 填金鑰:`cp .env.example .env`,填入 API 位址、金鑰與 ES 連線資訊
+3. 啟動:`python -m rag.service --config configs/online.yaml`
+4. 建索引:`curl -X POST localhost:8000/ingest -d '{}'`(ES 是持久索引,
+   啟動時不會自動 ingest)
 
-`experiment.py`(repo 根目錄)可以程式化生成多組 config、逐組跑查詢與
-評估、比較結果 —— 改頂部「實驗定義」區塊後:
+ES 的三個注意事項:
 
-```bash
-python experiment.py
-# [OK]   baseline            各題檢回 [3, 3]  hit_rate=1.000  mrr=1.000
-# [OK]   reranking=custom(…) 各題檢回 [3, 3]  hit_rate=1.000  mrr=1.000
-```
+- `dense_vector` 維度建立後不可變:換 embedding 模型/維度時請換
+  `index` 名稱重建。
+- 外部系統要直接讀索引欄位時,設 `layout: flat`(Haystack 式扁平文件,
+  搭配 `fields` 白名單);預設 layout 的自訂欄位在巢狀 `metadata.*`。
+- API 形狀對不上時:embedding / rerank 用 `*_field` 參數對映欄位名;
+  LLM 閘道不吃 model 欄位時用 `provider: gateway` /
+  `generation: gateway_openai_compatible`。
 
-- 兩種模式:`one_at_a_time`(基線 + 每次動一個槽位)/ `product`(全交叉)
-- 選項四種寫法:字串(只換 method)、list(方法鏈)、dict(整槽位替換,
-  可帶參數)、bundle(key 含「.」的 dict,多槽位綁定一起換,`_label` 命名)
-- **ingestion 相同的組合共用同一個索引**(只重建 inference 端),掃
-  inference 方法不重複 embed 語料;ES 實驗中不同 ingestion 變體請用
-  不同 `index` 名
-- config 有 `evaluation` 區塊時每組合自動算 hit_rate / MRR;單一壞組合
-  記 error 不中斷整批;也可 `from experiment import run_experiments`
-  在自己的腳本接原始結果
+## 新增自訂方法
 
-## 自訂模組(custom):一個 function 就能掛
+公司特有的邏輯(自家的檢索 API、切塊規則…)不用改框架,
+寫一個 function 掛上去就好:
 
-任何槽位都可以 `method: custom` 掛自己的 .py 檔,**不必改框架、不必寫
-class**。慣例:檔案裡提供一個 builder 函式(預設名 `build`),吃
-`(params, ctx)`、回傳符合槽位契約的函式:
+**1. 從範本開始改**:[examples/custom_modules/](examples/custom_modules/)
+有 13 個槽位各一份可跑的範本,`TODO(替換點)` 標明要換入真實邏輯的位置,
+槽位函式的型別註記就是該槽位要求的輸入輸出格式:
 
 ```python
 # my_reranker.py
 def build(params, ctx):
     top_k = params.get("top_k", 5)
 
-    def rerank(query, documents):        # 參數名須符合槽位契約
-        ...                              # 你的邏輯(呼叫內部服務、規則引擎…)
+    def rerank(query: str, documents: list[Document]) -> list[Document]:
+        ...                    # 你的邏輯(呼叫內部服務、規則引擎…)
         return documents[:top_k]
 
     return rerank
 ```
 
+**2. 在設定檔掛進模組**:
+
 ```yaml
   reranking:
     method: custom
     params:
-      file: ./my_reranker.py    # .py 路徑(相對執行目錄)
-      # function: build         # 預設 build
-      top_k: 3                  # 其餘鍵原樣透傳給 build 的 params
+      file: ./my_reranker.py    # 路徑相對「執行目錄」
+      top_k: 3                  # file / function 以外的鍵透傳給 build
 ```
+
+**3. 跑起來驗證**:啟動 service 或 `python try_rag.py`,看 trace。
 
 `ctx` 帶 `config` / `embeddings` / `store`,需要時可取用(例如自訂
-retrieval 直接查 `ctx.store`)。函式簽名不符契約時,**建構期**就會報錯
-並指明期望的參數名。
+retrieval 直接查 `ctx.store`)。簽名寫錯的話**啟動時**就會報錯並指明
+期望的參數名;完整契約表見 [docs/interfaces.md](docs/interfaces.md)。
 
-**寫自訂模組時,從 `examples/custom_modules/` 複製對應槽位的範本開始
-改**:13 個槽位各有一份離線可跑的範本 —— 11 個 function 槽位的範本,
-槽位函式的型別註記就是該槽位要求的 input / output 格式;embedding /
-indexing 兩個物件槽位的範本(`my_embeddings.py` / `my_indexing.py`)
-則示範需要提供哪些方法(範本即契約,對照表見該資料夾的 README;
-測試有覆蓋,範本永遠與契約同步)。
+要把方法做成「內建」(所有專案共用)也很簡單:在 `rag/slots/` 對應
+檔案加一個 `@register(槽位, 方法名)` 的 builder 函式即可,框架其他
+部分零改動。embedding 的進階參數(`source_field` 挑欄位做向量、
+`extra_vectors` 多向量)見 default.yaml 型錄的註解。
 
-embedding 另支援兩個框架層參數(所有方法含 custom 皆可用,見
-`configs/default.yaml` 型錄):`source_field` 指定主向量的來源欄位
-(embed 摘要、prompt 給原文的解耦手法)、`extra_vectors` 對額外欄位
-各出一組向量寫進切片 metadata(供 custom retrieval 做多向量檢索;
-ES 上搭配 `custom_mapping` 宣告 dense_vector)。
+## 與 Haystack 版的差異
 
-各槽位契約(函式參數名 → 回傳值)整理於
-[docs/interfaces.md](docs/interfaces.md);新增「內建」方法則是在
-`rag/slots/` 對應檔案加一個 `@register(slot, name)` 的 builder(參數
-schema 用 pydantic,`extra="forbid"`),框架其他部分零改動。
-
-## 專案結構
-
-```
-rag/
-├── config.py        # YAML schema(method/params/method_params)、${ENV} 展開、.env
-├── interfaces.py    # 13 槽位契約:Source/EvalCase、函式簽名、EXPECTED_PARAMS
-├── registry.py      # 註冊表、@register、build_slot(方法鏈、custom 載入、簽名驗證)
-├── core.py          # build_runtime / ingest / query / evaluate(循序流程 + trace)
-├── prompts.py       # prompt 組裝(切片帶 [chunk_id] 前綴,可稽核)
-├── service.py       # FastAPI:/health /ingest /query /evaluate
-└── slots/           # 各槽位的內建方法(一檔一槽位)
-configs/             # default.yaml(離線型錄)、online.yaml(ES + API)
-examples/custom_modules/   # 自訂模組範例(function-based)
-data/                # 樣本語料與評估集
-docs/interfaces.md   # 介面契約
-tests/               # 全離線測試(含 service 端到端)
-```
-
-## 相對 Haystack 版刻意捨棄的機制
-
-MVP 求簡,以下原版機制**刻意**不保留(需要時再加回):
-pipeline graph engine(改為循序函式)、建構期語意相容檢查
-(content_type / pages / 索引能力宣告)、ingestion 指紋與增量 ingest
-(以確定 chunk_id 的全量 upsert 取代;持久索引中已刪來源會留舊切片)、
-parsing 方法鏈與 PDF 解析(custom 可接)、llm_rewrite / llm_decompose
-與 glossary / jargon 查詢轉換(llm_multi_hyde / preqrag / insertrank
-已加回;自訂 transform 也可接,多子查詢 + fusion 的通道仍在)、
-「generator 沿用 generation 槽位」機制(各方法以 llm: 區塊自帶連線,
-共用連線用 YAML anchor)、sentence-transformers 與 cross-encoder
-本地模型、in-memory BM25 / hybrid。
+- **執行引擎**:Haystack 的 component + pipeline graph → LangChain
+  零件 + 純 Python 循序函式(`rag/core.py` 從上往下讀就是整條流程)。
+- **資料物件**:Haystack `Document` → LangChain `Document`
+  (`content`→`page_content`、`meta`→`metadata`);框架保證的
+  metadata 鍵(doc_id / seq / page / chunk_id)與舊版相同。
+- **自訂模組**:Haystack `@component` class → 一個 builder function。
+- **沒有增量 ingest 與 ingestion 指紋**:`/ingest` 一律全量重建,
+  靠固定的 chunk_id upsert 保持冪等。
+- 未搬過來的方法(sentence-transformers、cross-encoder、BM25/hybrid、
+  glossary / jargon / llm_rewrite / llm_decompose、PDF 解析等)都可以
+  用 custom 接回,或之後加進內建型錄。
