@@ -19,8 +19,9 @@ from typing import Any, Callable, Literal
 
 from pydantic import Field
 
-from rag.errors import ConfigError
+from rag.errors import APIResponseFormatError, ConfigError
 from rag.registry import BaseParams, validate_params
+from rag.slots.api_utils import post_json
 
 
 def message_text(message: Any) -> str:
@@ -34,22 +35,72 @@ def message_text(message: Any) -> str:
 
 
 class _LlmParams(BaseParams):
-    provider: Literal["mock", "openai_compatible"] = Field(
-        description="mock = 離線固定回覆;openai_compatible = OpenAI / vLLM / "
-        "Ollama / 公司閘道"
+    provider: Literal["mock", "openai_compatible", "gateway"] = Field(
+        description="mock = 離線固定回覆;openai_compatible = OpenAI SDK"
+        "(請求必帶 model;OpenAI / vLLM / Ollama);gateway = 手寫"
+        "OpenAI 式 HTTP client(model 選填,None = 請求完全不帶 model "
+        "欄位 —— 給不吃 model 的公司閘道)"
     )
     replies: list[str] | None = Field(
         default=None, description="provider: mock 的固定回覆(依序循環)"
     )
-    model: str | None = Field(default=None, description="openai_compatible 必填")
-    base_url: str | None = Field(default=None, description="None = 官方 OpenAI")
+    model: str | None = Field(
+        default=None,
+        description="openai_compatible 必填;gateway 選填(None = 不帶此欄位)",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description="openai_compatible:None = 官方 OpenAI;gateway:必填",
+    )
+    completions_path: str = Field(
+        default="/chat/completions", description="gateway 的補全端點路徑"
+    )
     api_key: str | None = Field(
-        default=None, description="None = 使用 OPENAI_API_KEY 環境變數"
+        default=None,
+        description="openai_compatible:None = 用 OPENAI_API_KEY 環境變數;"
+        "gateway:None = 不帶 Authorization 標頭",
     )
     temperature: float | None = Field(default=None, description="None = 不帶此欄位")
     max_tokens: int | None = Field(default=None, description="None = 不帶此欄位")
-    timeout: float | None = Field(default=None, description="None = client 預設")
+    timeout: float | None = Field(
+        default=None, description="None = client 預設(gateway 為 60 秒)"
+    )
     headers: dict[str, str] = Field(default_factory=dict, description="額外 HTTP 標頭")
+
+
+def _gateway_chat(p: _LlmParams) -> Callable[[list[dict[str, str]]], str]:
+    """手寫 OpenAI 式 chat client:messages dict 清單 → 回覆文字。
+
+    與 openai_compatible 的差別:``model`` 為 None 時**請求完全不帶
+    model 欄位**(OpenAI SDK 做不到)。共用 api_utils 的錯誤翻譯。
+    """
+    endpoint = p.base_url.rstrip("/") + p.completions_path
+    headers = dict(p.headers)
+    if p.api_key is not None:
+        headers.setdefault("Authorization", f"Bearer {p.api_key}")
+
+    def chat(messages: list[dict[str, str]]) -> str:
+        body: dict[str, Any] = {"messages": messages}
+        if p.model is not None:
+            body["model"] = p.model
+        if p.temperature is not None:
+            body["temperature"] = p.temperature
+        if p.max_tokens is not None:
+            body["max_tokens"] = p.max_tokens
+        data = post_json(
+            endpoint, body, headers=headers, timeout=p.timeout or 60.0
+        )
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            shape = sorted(data.keys()) if isinstance(data, dict) else type(data).__name__
+            raise APIResponseFormatError(
+                f"gateway 回應缺少 choices[0].message.content;"
+                f"回應頂層實際的欄位:{shape}"
+            ) from exc
+        return str(content)
+
+    return chat
 
 
 def build_text_llm(slot: str, method: str, raw: Any) -> Callable[[str], str]:
@@ -77,10 +128,24 @@ def build_text_llm(slot: str, method: str, raw: Any) -> Callable[[str], str]:
 
         return complete
 
+    if p.provider == "gateway":
+        if p.base_url is None:
+            raise ConfigError(
+                f"模組 '{slot}' 方法 '{method}' 的 llm 為 gateway 時必須提供 "
+                "base_url(公司閘道的 /v1 位址)"
+            )
+        chat = _gateway_chat(p)
+
+        def complete_via_gateway(prompt: str) -> str:
+            return chat([{"role": "user", "content": prompt}])
+
+        return complete_via_gateway
+
     if p.model is None:
         raise ConfigError(
             f"模組 '{slot}' 方法 '{method}' 的 llm 為 openai_compatible 時"
-            "必須提供 model"
+            "必須提供 model;API 不吃 model 欄位的公司閘道請改用 "
+            "provider: gateway(model 選填,None = 請求不帶 model 欄位)"
         )
     from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI

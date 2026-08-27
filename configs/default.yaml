@@ -148,12 +148,18 @@ inference:
         # keep_original: true       # 預設 true:原查詢 + 假設文件各自檢索後融合
         # prompt: |                 # 預設:內建(需含 {query})
         llm:                        # 必填:LLM 連線;離線示範用 mock,
-          provider: mock            #   實際接入改 openai_compatible:
+          provider: mock            #   實際接入改 openai_compatible 或 gateway:
           replies: ["假設文件一\n假設文件二\n假設文件三"]
-          # provider: openai_compatible
+          # provider: openai_compatible   # OpenAI SDK(請求必帶 model)
           # model: gpt-5-mini
-          # base_url: ...           # vLLM / Ollama / 公司閘道
+          # base_url: ...           # vLLM / Ollama
           # api_key: YOUR_TOKEN
+          # --- 或:不吃 model 欄位的公司閘道 ---
+          # provider: gateway       # 手寫 OpenAI 式 client
+          # base_url: https://llm.example.com/v1   # 必填
+          # api_key: YOUR_TOKEN     # 預設 None = 不帶 Authorization
+          # model: your-model       # 預設 None = 請求完全不帶 model 欄位
+          # completions_path: /chat/completions    # 預設值即此
       preqrag:                      # PreQRAG:先分類 single/multi 再改寫或拆解
         # num_rewrites: 2           # 預設 2:single 分支的改寫條數
         # max_subqueries: 4         # 預設 4:multi 分支的子查詢數上限
@@ -210,8 +216,18 @@ inference:
         top_k: 3                    # file / function 以外的鍵透傳給 builder
 
   generation:
-    method: mock                    # 可選:mock / openai_compatible / custom
+    # 可選:mock / openai_compatible / gateway_openai_compatible / custom
+    method: mock
     method_params:
+      gateway_openai_compatible:    # 公司閘道(可不帶 model 欄位)
+        base_url: https://llm.example.com/v1    # 必填
+        api_key: YOUR_TOKEN         # 預設 None = 不帶 Authorization 標頭
+        # model: your-model         # 預設 None = 請求完全不帶 model 欄位
+        # temperature: 0.2          # 預設 None(不帶)
+        # max_tokens: 1024          # 預設 None(不帶)
+        # timeout: 60               # 預設 60 秒
+        # headers: {X-Tenant: team-a}   # 預設 {}
+        # completions_path: /chat/completions   # 預設值即此
       mock:                         # 離線假答案(依序循環)
         # replies: ["固定回覆"]     # 預設 None = 內建預設回覆
       openai_compatible:            # OpenAI / vLLM / Ollama / 公司閘道

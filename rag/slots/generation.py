@@ -8,12 +8,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from pydantic import Field
 
 from rag.interfaces import GenerateFn
-from rag.llm import message_text
+from rag.llm import _gateway_chat, _LlmParams, message_text
 from rag.registry import BaseParams, BuildContext, register, validate_params
+
+
+def _to_role_dicts(messages: list[BaseMessage]) -> list[dict[str, str]]:
+    """把 LangChain messages 轉成 OpenAI 式 role dict 清單。"""
+    role_dicts: list[dict[str, str]] = []
+    for message in messages:
+        if isinstance(message, SystemMessage):
+            role = "system"
+        elif isinstance(message, AIMessage):
+            role = "assistant"
+        else:
+            role = "user"
+        role_dicts.append({"role": role, "content": message_text(message)})
+    return role_dicts
 
 
 class _MockParams(BaseParams):
@@ -33,6 +47,51 @@ def build_mock(params: dict[str, Any], ctx: BuildContext) -> GenerateFn:
         reply = replies[state["count"] % len(replies)]
         state["count"] += 1
         return reply
+
+    return generate
+
+
+class _GatewayParams(BaseParams):
+    base_url: str = Field(description="公司閘道的 /v1 位址")
+    completions_path: str = Field(
+        default="/chat/completions", description="補全端點路徑"
+    )
+    model: str | None = Field(
+        default=None, description="選填;None = 請求完全不帶 model 欄位"
+    )
+    api_key: str | None = Field(
+        default=None, description="None = 不帶 Authorization 標頭"
+    )
+    temperature: float | None = Field(default=None, description="None = 不帶此欄位")
+    max_tokens: int | None = Field(default=None, description="None = 不帶此欄位")
+    timeout: float | None = Field(default=None, description="None = 60 秒")
+    headers: dict[str, str] = Field(default_factory=dict, description="額外 HTTP 標頭")
+
+
+@register("generation", "gateway_openai_compatible")
+def build_gateway(params: dict[str, Any], ctx: BuildContext) -> GenerateFn:
+    """OpenAI 式的公司閘道(手寫 HTTP client)。
+
+    與 ``openai_compatible`` 的差別:``model`` 選填 —— None 時請求
+    **完全不帶 model 欄位**,給不吃 model 的內部閘道用。
+    """
+    p = validate_params("generation", "gateway_openai_compatible", _GatewayParams, params)
+    chat = _gateway_chat(
+        _LlmParams(
+            provider="gateway",
+            base_url=p.base_url,
+            completions_path=p.completions_path,
+            model=p.model,
+            api_key=p.api_key,
+            temperature=p.temperature,
+            max_tokens=p.max_tokens,
+            timeout=p.timeout,
+            headers=p.headers,
+        )
+    )
+
+    def generate(messages: list[BaseMessage]) -> str:
+        return chat(_to_role_dicts(messages))
 
     return generate
 
