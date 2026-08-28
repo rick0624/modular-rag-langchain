@@ -65,9 +65,10 @@ python -m pytest                                  # 跑測試(也全部離線)
 | routing | 查詢分類(結果附在輸出上,不影響檢索) | `keyword_match` / `custom` |
 | formatter | 把最終結果組成對外格式 | `simple_json` / `custom` |
 
-每個方法的參數與預設值,直接看 [configs/default.yaml](configs/default.yaml)
-(它同時是「方法型錄」:所有方法的參數區塊並存展示,每個參數都有註解);
-模組之間的輸入輸出契約見 [docs/interfaces.md](docs/interfaces.md)。
+每個方法的參數與預設值,見 [docs/methods.md](docs/methods.md)(完整
+型錄)與 [configs/default.yaml](configs/default.yaml)(可跑的示範,
+每個參數都有註解);模組之間的輸入輸出契約見
+[docs/interfaces.md](docs/interfaces.md)。
 
 ## 專案結構
 
@@ -90,7 +91,9 @@ data/                     範例語料與評估集(qa.jsonl)
 try_rag.py                主要執行入口:建索引 → 查詢 → 評估
 experiment.py             管線組合實驗(批次比較不同方法組合)
 tests/                    測試(全部離線,不碰網路)
-docs/interfaces.md        模組契約的完整說明
+docs/
+  methods.md              所有方法與參數的完整型錄
+  interfaces.md           模組契約的完整說明
 .env.example              金鑰範本(複製成 .env 填入)
 ```
 

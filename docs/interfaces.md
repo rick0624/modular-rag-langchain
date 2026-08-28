@@ -4,7 +4,8 @@
 `id`)與 `BaseMessage`,不自訂資料物件;僅有兩個輕量 dataclass:
 `Source`(import → parsing 之間的一份來源)與 `EvalCase`(評估資料一筆)。
 契約 = **每個模組的輸入輸出形狀** + **Document 的 metadata 鍵**;兩者不變,
-方法怎麼換都不影響其他模組。
+方法怎麼換都不影響其他模組。可用的方法選項與參數見
+[methods.md](methods.md)。
 
 每個方法都是一個 builder 函式 `build(params, ctx) -> 產物`,產物是
 **一個函式**(簽名見下表;`method: custom` 的產物在建構期以
