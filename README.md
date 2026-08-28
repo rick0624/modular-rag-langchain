@@ -21,14 +21,14 @@ Evaluation: 測試集逐題查詢 → hit rate / MRR                            
 
 ```bash
 pip install -r requirements.txt
-python try_rag.py
+python run_demo.py
 ```
 
 執行後會看到(全程離線):建索引 → 查詢 → 印出檢索結果、送給 LLM 的
 prompt、回答與每步 trace,最後是評估分數(hit_rate / mrr)。
 
 ```bash
-python try_rag.py --query "特休假滿兩年有幾天?"    # 指定問題
+python run_demo.py --query "特休假滿兩年有幾天?"    # 指定問題
 python -m pytest                                  # 跑測試(也全部離線)
 ```
 
@@ -88,7 +88,7 @@ rag/                      框架本體
   slots/                  各模組的內建方法(一檔一槽位)
 examples/custom_modules/  自訂模組範本(13 個槽位各一份,複製來改)
 data/                     範例語料與評估集(qa.jsonl)
-try_rag.py                主要執行入口:建索引 → 查詢 → 評估
+run_demo.py                主要執行入口:建索引 → 查詢 → 評估
 experiment.py             管線組合實驗(批次比較不同方法組合)
 tests/                    測試(全部離線,不碰網路)
 docs/
@@ -103,9 +103,9 @@ docs/
 ## 執行、測試與實驗
 
 ```bash
-python try_rag.py                                   # 預設設定檔,全流程
-python try_rag.py --query "你的問題"                 # 指定問題
-python try_rag.py --config configs/online.yaml      # 指定設定檔
+python run_demo.py                                   # 預設設定檔,全流程
+python run_demo.py --query "你的問題"                 # 指定問題
+python run_demo.py --config configs/online.yaml      # 指定設定檔
 python -m pytest                                    # 全部測試(離線)
 python experiment.py                                # 批次比較方法組合
 ```
@@ -168,7 +168,7 @@ python -m rag.service --config configs/default.yaml
 1. 設定檔選用 `configs/online.yaml`(API embedding + Elasticsearch +
    API rerank + LLM 已配置好形狀)
 2. 填金鑰:`cp .env.example .env`,填入 API 位址、金鑰與 ES 連線資訊
-3. 跑起來:`python try_rag.py --config configs/online.yaml --query "測試問題"`
+3. 跑起來:`python run_demo.py --config configs/online.yaml --query "測試問題"`
    (會建索引 → 查詢 → 評估;ES 是 upsert,重跑不會倍增)
 
 ES 的三個注意事項:
@@ -213,7 +213,7 @@ def build(params, ctx):
       top_k: 3                  # file / function 以外的鍵透傳給 build
 ```
 
-**3. 跑起來驗證**:`python try_rag.py --config configs/my.yaml`,
+**3. 跑起來驗證**:`python run_demo.py --config configs/my.yaml`,
 看輸出與 log 裡的 trace。
 
 `ctx` 帶 `config` / `embeddings` / `store`,需要時可取用(例如自訂

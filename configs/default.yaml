@@ -5,7 +5,7 @@
 # 目前啟用的組合完全離線:mock embedding + in_memory 索引 + mock 生成,
 # 不需網路、金鑰或模型下載,適合開發與試跑:
 #
-#   python try_rag.py --config configs/default.yaml
+#   python run_demo.py --config configs/default.yaml
 #
 # 註解慣例:
 #   - 被註解掉的參數 = 選填,取消註解即可覆寫預設值。

@@ -2,8 +2,8 @@
 
 用法(請在 repo 根目錄執行,config 內的相對路徑以工作目錄解析)::
 
-    python try_rag.py
-    python try_rag.py --config configs/default.yaml --query "特休假滿兩年有幾天?"
+    python run_demo.py
+    python run_demo.py --config configs/default.yaml --query "特休假滿兩年有幾天?"
 """
 
 from __future__ import annotations

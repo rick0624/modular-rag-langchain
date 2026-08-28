@@ -2,12 +2,12 @@
 # OpenAI 相容生成。機密一律以 ${ENV_VAR} 注入(複製 .env.example 為
 # .env 填入實際值),設定檔可安心進版控。
 #
-#   python try_rag.py --config configs/online.yaml --query "測試問題"
+#   python run_demo.py --config configs/online.yaml --query "測試問題"
 #
 # 提醒:
 #   - ES 的 dense_vector 維度建立後不可變,換 embedding 模型/維度時
 #     請換 index 名稱(或先刪除重建)。
-#   - elasticsearch 是持久索引,寫入是 upsert:try_rag.py 重跑不會倍增。
+#   - elasticsearch 是持久索引,寫入是 upsert:run_demo.py 重跑不會倍增。
 #     (以 service 形式執行時,啟動預設不自動 ingest,先 POST /ingest 建索引)
 
 ingestion:
